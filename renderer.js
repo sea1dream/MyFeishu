@@ -121,6 +121,11 @@ function normalizeDocumentTitle(value) {
   return normalized || "未命名文档";
 }
 
+function updateDocumentTitlePreview(title) {
+  refs.docName.textContent = title;
+  document.title = `${title} - FlowDoc`;
+}
+
 function updateDocumentMeta(filePath, title = getDocumentTitleFromPath(filePath)) {
   if (!state.currentDocument) {
     state.currentDocument = { filePath, title };
@@ -129,9 +134,8 @@ function updateDocumentMeta(filePath, title = getDocumentTitleFromPath(filePath)
     state.currentDocument.title = title;
   }
 
-  refs.docName.textContent = title;
+  updateDocumentTitlePreview(title);
   refs.docPath.textContent = filePath;
-  document.title = `${title} - FlowDoc`;
 }
 
 function normalizeCodeText(text) {
@@ -642,6 +646,17 @@ function moveCaretAfterNode(node) {
   state.savedSelection = createSelectionBookmark(range);
 }
 
+function queueEditorMutation({ history = "schedule" } = {}) {
+  if (history === "capture") {
+    captureHistoryNow();
+  } else if (history === "schedule") {
+    scheduleHistoryCapture();
+  }
+
+  scheduleAutosave();
+  scheduleUiRefresh();
+}
+
 function scheduleUiRefresh() {
   window.cancelAnimationFrame(state.uiFrame);
   state.uiFrame = window.requestAnimationFrame(refreshFloatingControls);
@@ -994,6 +1009,39 @@ async function copyCodeBlock(button) {
   showToast("Code copied to clipboard", "success", 1800);
 }
 
+function syncCodeBlockEditor(codeEditor, { history = "schedule" } = {}) {
+  if (!codeEditor) {
+    return;
+  }
+
+  const caretOffset = getSelectionTextOffset(codeEditor);
+  renderCodeBlock(codeEditor.closest(".code-block-node"), caretOffset);
+  saveSelection();
+  queueEditorMutation({ history });
+}
+
+function insertResourceFiles(files, markupBuilder) {
+  if (!files.length) {
+    return false;
+  }
+
+  clearSpecialSelection();
+  collapseTransientGaps();
+  restoreSelection();
+
+  files.forEach((file) => {
+    insertHtmlAtSelection(markupBuilder(file));
+  });
+
+  return true;
+}
+
+async function finalizeEmbeddedResourceInsertion() {
+  normalizeEditor();
+  await refreshEmbeddedResources();
+  queueEditorMutation({ history: "capture" });
+}
+
 function normalizeEditor() {
   migrateLegacyCodeBlocks();
   normalizeSpecialBlockLayout();
@@ -1225,14 +1273,12 @@ async function restoreHistoryEntry(index) {
 
   if (titleNode) {
     const liveTitle = normalizeDocumentTitle(getBlockText(titleNode));
-    refs.docName.textContent = liveTitle;
-    document.title = `${liveTitle} - FlowDoc`;
+    updateDocumentTitlePreview(liveTitle);
   }
 
   saveSelection();
   scheduleDocumentTitleSync();
-  scheduleUiRefresh();
-  scheduleAutosave();
+  queueEditorMutation({ history: "none" });
   persistHistoryState();
   return true;
 }
@@ -1377,7 +1423,10 @@ async function refreshEmbeddedResources() {
 }
 
 function resetDocumentUi() {
+  window.clearTimeout(state.saveTimer);
+  window.clearTimeout(state.historyTimer);
   window.clearTimeout(state.titleSyncTimer);
+  window.cancelAnimationFrame(state.uiFrame);
   state.titleSyncPromise = null;
   state.savedSelection = null;
   clearSpecialSelection();
@@ -1387,14 +1436,9 @@ function resetDocumentUi() {
 
 async function mountDocument(documentPayload, successMessage) {
   const loadedHtml = documentPayload.html || "<h1>未命名文档</h1><p><br></p>";
-  updateDocumentMeta(
-    documentPayload.filePath,
-    documentPayload.title || getDocumentTitleFromPath(documentPayload.filePath),
-  );
+  const documentTitle = documentPayload.title || getDocumentTitleFromPath(documentPayload.filePath);
 
-  refs.docName.textContent = documentPayload.title || toDisplayName(documentPayload.filePath);
-  refs.docPath.textContent = documentPayload.filePath;
-  refs.editor.innerHTML = documentPayload.html || "<h1>未命名文档</h1><p><br></p>";
+  updateDocumentMeta(documentPayload.filePath, documentTitle);
   refs.emptyState.classList.add("hidden");
   refs.editorSurface.classList.remove("hidden");
   refs.editor.innerHTML = loadedHtml;
@@ -1405,7 +1449,8 @@ async function mountDocument(documentPayload, successMessage) {
   await refreshEmbeddedResources();
 
   const serializedHtml = serializeDocument();
-  state.lastSavedHtml = loadedHtml;
+  const normalizedDocumentChanged = serializedHtml !== loadedHtml;
+  state.lastSavedHtml = normalizedDocumentChanged ? loadedHtml : serializedHtml;
   initializeHistoryState(serializedHtml);
   updateAvailability();
   setStatus(successMessage, "success");
@@ -1415,10 +1460,8 @@ async function mountDocument(documentPayload, successMessage) {
   saveSelection();
   scheduleUiRefresh();
 
-  if (serializedHtml !== loadedHtml) {
+  if (normalizedDocumentChanged) {
     scheduleAutosave();
-  } else {
-    state.lastSavedHtml = serializedHtml;
   }
 }
 
@@ -1772,18 +1815,14 @@ function applyBlock(tagName) {
   document.execCommand("formatBlock", false, `<${tagName}>`);
   normalizeEditor();
   saveSelection();
-  captureHistoryNow();
-  scheduleAutosave();
-  scheduleUiRefresh();
+  queueEditorMutation({ history: "capture" });
 }
 
 function applyInlineCommand(command) {
   restoreSelection();
   document.execCommand(command, false);
   saveSelection();
-  captureHistoryNow();
-  scheduleAutosave();
-  scheduleUiRefresh();
+  queueEditorMutation({ history: "capture" });
 }
 
 function insertCodeBlock(codeText = "") {
@@ -1793,49 +1832,23 @@ function insertCodeBlock(codeText = "") {
   insertHtmlAtSelection(html);
   normalizeEditor();
   focusCodeBlockById(nodeId);
-  captureHistoryNow();
-  scheduleAutosave();
-  scheduleUiRefresh();
+  queueEditorMutation({ history: "capture" });
 }
 
 async function insertImageFiles(files) {
-  if (!files.length) {
+  if (!insertResourceFiles(files, buildImageMarkup)) {
     return;
   }
 
-  clearSpecialSelection();
-  collapseTransientGaps();
-  restoreSelection();
-
-  files.forEach((file) => {
-    insertHtmlAtSelection(buildImageMarkup(file));
-  });
-
-  normalizeEditor();
-  await refreshEmbeddedResources();
-  captureHistoryNow();
-  scheduleAutosave();
-  scheduleUiRefresh();
+  await finalizeEmbeddedResourceInsertion();
 }
 
 async function insertAttachmentFiles(files) {
-  if (!files.length) {
+  if (!insertResourceFiles(files, buildAttachmentMarkup)) {
     return;
   }
 
-  clearSpecialSelection();
-  collapseTransientGaps();
-  restoreSelection();
-
-  files.forEach((file) => {
-    insertHtmlAtSelection(buildAttachmentMarkup(file));
-  });
-
-  normalizeEditor();
-  await refreshEmbeddedResources();
-  captureHistoryNow();
-  scheduleAutosave();
-  scheduleUiRefresh();
+  await finalizeEmbeddedResourceInsertion();
 }
 
 async function handleCreateDocument() {
@@ -1968,12 +1981,7 @@ async function handlePaste(event) {
     event.preventDefault();
     const plainText = event.clipboardData.getData("text/plain");
     insertPlainTextAtCursor(plainText);
-    const caretOffset = getSelectionTextOffset(codeEditor);
-    renderCodeBlock(codeEditor.closest(".code-block-node"), caretOffset);
-    saveSelection();
-    scheduleHistoryCapture();
-    scheduleAutosave();
-    scheduleUiRefresh();
+    syncCodeBlockEditor(codeEditor);
     return;
   }
 
@@ -2102,9 +2110,7 @@ function removeSpecialBlock(block) {
   }
 
   saveSelection();
-  captureHistoryNow();
-  scheduleAutosave();
-  scheduleUiRefresh();
+  queueEditorMutation({ history: "capture" });
 }
 
 function handleDeletionKey(event) {
@@ -2271,9 +2277,7 @@ refs.insertMenu.addEventListener("click", (event) => {
     prepareInsertionPointFromCaret();
     insertHtmlAtSelection("<blockquote>引用内容</blockquote>");
     normalizeEditor();
-    captureHistoryNow();
-    scheduleAutosave();
-    scheduleUiRefresh();
+    queueEditorMutation({ history: "capture" });
   }
 });
 
@@ -2286,25 +2290,11 @@ refs.editor.addEventListener("mousedown", (event) => {
     return;
   }
 
-  const copyAction = event.target.closest("[data-action='copy-code']");
-
-  if (copyAction) {
-    clearSpecialSelection();
-    collapseTransientGaps();
-    return;
-  }
-
-  const languageSelect = event.target.closest(".code-language-select");
-
-  if (languageSelect) {
-    clearSpecialSelection();
-    collapseTransientGaps();
-    return;
-  }
-
-  const codeEditor = event.target.closest(".code-block-editor");
-
-  if (codeEditor) {
+  if (
+    event.target.closest("[data-action='copy-code']") ||
+    event.target.closest(".code-language-select") ||
+    event.target.closest(".code-block-editor")
+  ) {
     clearSpecialSelection();
     collapseTransientGaps();
     return;
@@ -2337,12 +2327,7 @@ refs.editor.addEventListener("input", (event) => {
   const codeEditor = event.target.closest(".code-block-editor");
 
   if (codeEditor) {
-    const caretOffset = getSelectionTextOffset(codeEditor);
-    renderCodeBlock(codeEditor.closest(".code-block-node"), caretOffset);
-    saveSelection();
-    scheduleHistoryCapture();
-    scheduleAutosave();
-    scheduleUiRefresh();
+    syncCodeBlockEditor(codeEditor);
     return;
   }
 
@@ -2357,14 +2342,11 @@ refs.editor.addEventListener("input", (event) => {
 
   if (titleNode && titleNode === getPrimaryTitleNode()) {
     const liveTitle = normalizeDocumentTitle(getBlockText(titleNode));
-    refs.docName.textContent = liveTitle;
-    document.title = `${liveTitle} - FlowDoc`;
+    updateDocumentTitlePreview(liveTitle);
     scheduleDocumentTitleSync();
   }
 
-  scheduleHistoryCapture();
-  scheduleAutosave();
-  scheduleUiRefresh();
+  queueEditorMutation();
 });
 
 refs.editor.addEventListener("paste", (event) => {
@@ -2394,12 +2376,7 @@ refs.editor.addEventListener("keydown", (event) => {
   if (codeEditor && event.key === "Tab") {
     event.preventDefault();
     insertPlainTextAtCursor("  ");
-    const caretOffset = getSelectionTextOffset(codeEditor);
-    renderCodeBlock(codeEditor.closest(".code-block-node"), caretOffset);
-    saveSelection();
-    scheduleHistoryCapture();
-    scheduleAutosave();
-    scheduleUiRefresh();
+    syncCodeBlockEditor(codeEditor);
   }
 });
 
@@ -2417,7 +2394,7 @@ refs.editor.addEventListener("click", (event) => {
 
   if (copyButton) {
     copyCodeBlock(copyButton).catch((error) => {
-      reportError("Copy code failed", error);
+      reportError("复制代码失败", error);
     });
     return;
   }
@@ -2436,9 +2413,7 @@ refs.editor.addEventListener("change", (event) => {
   block.dataset.language = languageSelect.value;
   renderCodeBlock(block);
   saveSelection();
-  captureHistoryNow();
-  scheduleAutosave();
-  scheduleUiRefresh();
+  queueEditorMutation({ history: "capture" });
 });
 
 refs.editor.addEventListener("focusout", (event) => {
