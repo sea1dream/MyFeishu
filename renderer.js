@@ -144,6 +144,7 @@ const state = {
     searchText: "",
   },
   attachmentPreview: null,
+  imageContextMenuPath: "",
 };
 
 const refs = {
@@ -153,6 +154,7 @@ const refs = {
   docTags: document.getElementById("docTags"),
   tagInput: document.getElementById("tagInput"),
   addTagButton: document.getElementById("addTagButton"),
+  docOutline: document.getElementById("docOutline"),
   libraryRootPath: document.getElementById("libraryRootPath"),
   librarySearchInput: document.getElementById("librarySearchInput"),
   libraryTagFilters: document.getElementById("libraryTagFilters"),
@@ -169,6 +171,7 @@ const refs = {
   blockHandleButton: document.getElementById("blockHandleButton"),
   insertMenu: document.getElementById("insertMenu"),
   toast: document.getElementById("toast"),
+  imageContextMenu: document.getElementById("imageContextMenu"),
   attachmentPreviewModal: document.getElementById("attachmentPreviewModal"),
   attachmentPreviewTitle: document.getElementById("attachmentPreviewTitle"),
   attachmentPreviewMeta: document.getElementById("attachmentPreviewMeta"),
@@ -193,6 +196,110 @@ function showToast(message, tone = "success", duration = 2600) {
   }, duration);
 }
 
+function getDocumentOutlineHeadings() {
+  return [...refs.editor.querySelectorAll("h1, h2, h3")];
+}
+
+function ensureDocumentOutlineAnchors() {
+  getDocumentOutlineHeadings().forEach((heading, index) => {
+    const outlineId = `flowdoc-outline-${index + 1}`;
+    heading.dataset.outlineId = outlineId;
+    heading.id = outlineId;
+  });
+}
+
+function getDocumentOutlineItems() {
+  ensureDocumentOutlineAnchors();
+
+  return getDocumentOutlineHeadings().map((heading, index) => ({
+    id: heading.dataset.outlineId || `flowdoc-outline-${index + 1}`,
+    level: Number(heading.tagName.slice(1)) || 1,
+    text: normalizeCodeText(getBlockText(heading)).replace(/\s+/gu, " ").trim() || "未命名标题",
+  }));
+}
+
+function findActiveOutlineHeadingId(range = getSelectionRange()) {
+  if (!range || !isRangeInsideEditor(range)) {
+    return "";
+  }
+
+  const directHeading = nodeToElement(range.startContainer)?.closest("h1, h2, h3");
+
+  if (directHeading?.dataset.outlineId) {
+    return directHeading.dataset.outlineId;
+  }
+
+  const activeBlock = getActiveBlock(range);
+  let cursor = activeBlock;
+
+  while (cursor) {
+    if (/^H[1-3]$/u.test(cursor.tagName || "") && cursor.dataset.outlineId) {
+      return cursor.dataset.outlineId;
+    }
+
+    cursor = cursor.previousElementSibling;
+  }
+
+  return getDocumentOutlineHeadings()[0]?.dataset.outlineId || "";
+}
+
+function updateDocumentOutlineActiveState(activeId = findActiveOutlineHeadingId()) {
+  if (!refs.docOutline) {
+    return;
+  }
+
+  refs.docOutline.querySelectorAll("[data-outline-target]").forEach((button) => {
+    button.classList.toggle("is-active", Boolean(activeId) && button.dataset.outlineTarget === activeId);
+  });
+}
+
+function renderDocumentOutline() {
+  if (!refs.docOutline) {
+    return;
+  }
+
+  if (!state.currentDocument) {
+    refs.docOutline.className = "outline-list empty";
+    refs.docOutline.textContent = "打开文档后会根据标题自动生成目录";
+    return;
+  }
+
+  const items = getDocumentOutlineItems();
+
+  if (!items.length) {
+    refs.docOutline.className = "outline-list empty";
+    refs.docOutline.textContent = "当前文档里还没有可加入目录的标题";
+    return;
+  }
+
+  refs.docOutline.className = "outline-list";
+  refs.docOutline.innerHTML = items
+    .map(
+      (item) =>
+        `<button type="button" class="outline-button" data-outline-target="${escapeHtml(item.id)}" data-level="${item.level}">${escapeHtml(item.text)}</button>`,
+    )
+    .join("");
+
+  updateDocumentOutlineActiveState();
+}
+
+function jumpToOutlineHeading(outlineId) {
+  const heading = refs.editor.querySelector(`[data-outline-id="${outlineId}"]`);
+
+  if (!heading) {
+    return;
+  }
+
+  heading.scrollIntoView({
+    behavior: "smooth",
+    block: "center",
+  });
+  placeCaretInside(heading, { start: true });
+  saveSelection();
+  updateDocumentOutlineActiveState(outlineId);
+  scheduleUiRefresh();
+}
+
 function hideSelectionBubble() {
   refs.selectionBubble.classList.add("hidden");
 }
@@ -204,6 +311,37 @@ function hideInsertMenu() {
 function hideBlockHandle() {
   refs.blockHandle.classList.add("hidden");
   hideInsertMenu();
+}
+
+function hideImageContextMenu() {
+  refs.imageContextMenu.classList.add("hidden");
+  refs.imageContextMenu.setAttribute("aria-hidden", "true");
+  refs.imageContextMenu.style.left = "";
+  refs.imageContextMenu.style.top = "";
+  delete refs.imageContextMenu.dataset.relativePath;
+  delete refs.imageContextMenu.dataset.name;
+  state.imageContextMenuPath = "";
+}
+
+function showImageContextMenu(event, imageNode) {
+  if (!state.currentDocument || !imageNode?.dataset?.src) {
+    return;
+  }
+
+  refs.imageContextMenu.dataset.relativePath = imageNode.dataset.src;
+  refs.imageContextMenu.dataset.name = imageNode.dataset.name || "";
+  state.imageContextMenuPath = imageNode.dataset.src;
+  refs.imageContextMenu.classList.remove("hidden");
+  refs.imageContextMenu.setAttribute("aria-hidden", "false");
+
+  const menuRect = refs.imageContextMenu.getBoundingClientRect();
+  const maxLeft = window.innerWidth - menuRect.width - 12;
+  const maxTop = window.innerHeight - menuRect.height - 12;
+  const left = Math.max(12, Math.min(event.clientX, maxLeft));
+  const top = Math.max(12, Math.min(event.clientY, maxTop));
+
+  refs.imageContextMenu.style.left = `${left}px`;
+  refs.imageContextMenu.style.top = `${top}px`;
 }
 
 function clearAttachmentPreviewContent() {
@@ -324,8 +462,10 @@ function updateAvailability() {
   refs.editor.contentEditable = enabled ? "true" : "false";
   refs.tagInput.disabled = !enabled;
   refs.addTagButton.disabled = !enabled;
+  renderDocumentOutline();
 
   if (!enabled) {
+    hideImageContextMenu();
     hideSelectionBubble();
     hideBlockHandle();
   }
@@ -1473,6 +1613,7 @@ function queueEditorMutation({ history = "schedule" } = {}) {
     scheduleHistoryCapture();
   }
 
+  renderDocumentOutline();
   scheduleAutosave();
   scheduleUiRefresh();
 }
@@ -2185,6 +2326,8 @@ function normalizeEditor() {
   if (!refs.editor.innerHTML.trim()) {
     refs.editor.innerHTML = "<p><br></p>";
   }
+
+  ensureDocumentOutlineAnchors();
 }
 
 function clearSpecialSelection() {
@@ -2233,6 +2376,11 @@ function serializeDocument() {
   clone.querySelectorAll(".resource-placeholder").forEach((placeholder) => {
     placeholder.hidden = true;
     placeholder.textContent = "";
+  });
+
+  clone.querySelectorAll("h1, h2, h3").forEach((heading) => {
+    heading.removeAttribute("data-outline-id");
+    heading.removeAttribute("id");
   });
 
   clone.querySelectorAll("p.editor-gap").forEach((gap) => {
@@ -2625,6 +2773,7 @@ function resetDocumentUi() {
   state.titleSyncPromise = null;
   state.savedSelection = null;
   closeAttachmentPreview();
+  hideImageContextMenu();
   clearSpecialSelection();
   hideSelectionBubble();
   hideBlockHandle();
@@ -2643,6 +2792,7 @@ async function mountDocument(documentPayload, successMessage) {
   resetDocumentUi();
   normalizeEditor();
   ensureDocumentTitleHeading(state.currentDocument.title);
+  renderDocumentOutline();
   await refreshEmbeddedResources();
 
   const serializedHtml = serializeDocument();
@@ -3009,6 +3159,7 @@ function rememberSelectionIfNeeded() {
     saveSelection();
   }
 
+  updateDocumentOutlineActiveState();
   scheduleUiRefresh();
 }
 
@@ -3023,6 +3174,42 @@ function applyBlock(tagName) {
 function applyInlineCommand(command) {
   restoreSelection();
   document.execCommand(command, false);
+  saveSelection();
+  queueEditorMutation({ history: "capture" });
+}
+
+function applyTextColor(color) {
+  const range = restoreSelection();
+
+  if (!color || !range || range.collapsed) {
+    showToast("请先选中文字", "error", 1400);
+    return;
+  }
+
+  document.execCommand("styleWithCSS", false, true);
+  document.execCommand("foreColor", false, color);
+  document.execCommand("styleWithCSS", false, false);
+  saveSelection();
+  queueEditorMutation({ history: "capture" });
+}
+
+function applyInlineCode() {
+  const range = restoreSelection();
+
+  if (!range || range.collapsed) {
+    showToast("请先选中文字", "error", 1400);
+    return;
+  }
+
+  const selectedText = normalizeCodeText(getSelection().toString()).replace(/\s+/gu, " ").trim();
+
+  if (!selectedText) {
+    showToast("请先选中文字", "error", 1400);
+    return;
+  }
+
+  insertHtmlAtSelection(`<code>${escapeHtml(selectedText)}</code>`);
+  normalizeEditor();
   saveSelection();
   queueEditorMutation({ history: "capture" });
 }
@@ -3367,6 +3554,45 @@ async function handleAttachmentPreview(button) {
   openAttachmentPreview(result, node.dataset.src);
 }
 
+async function handleSaveImageAs(relativePath) {
+  if (!state.currentDocument || !relativePath) {
+    return;
+  }
+
+  const result = await api.saveImageAs({
+    docPath: state.currentDocument.filePath,
+    relativePath,
+  });
+
+  if (result.canceled) {
+    return;
+  }
+
+  showToast(`图片已另存为 ${result.savedPath}`, "success", 2200);
+}
+
+async function handleOpenImage(relativePath) {
+  if (!state.currentDocument || !relativePath) {
+    return;
+  }
+
+  await api.openImage({
+    docPath: state.currentDocument.filePath,
+    relativePath,
+  });
+}
+
+async function handleRevealImageInFolder(relativePath) {
+  if (!state.currentDocument || !relativePath) {
+    return;
+  }
+
+  await api.revealImageInFolder({
+    docPath: state.currentDocument.filePath,
+    relativePath,
+  });
+}
+
 function reportError(prefix, error) {
   const message = `${prefix}：${error.message}`;
   setStatus(message, "error");
@@ -3563,6 +3789,16 @@ refs.docTags.addEventListener("click", (event) => {
   });
 });
 
+refs.docOutline.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-outline-target]");
+
+  if (!button || !state.currentDocument) {
+    return;
+  }
+
+  jumpToOutlineHeading(button.dataset.outlineTarget || "");
+});
+
 refs.librarySearchInput.addEventListener("input", (event) => {
   state.library.searchText = event.target.value || "";
   renderLibraryView();
@@ -3616,6 +3852,7 @@ refs.selectionBubble.addEventListener("click", (event) => {
 
   const command = button.dataset.command;
   const block = button.dataset.block;
+  const color = button.dataset.color;
   const special = button.dataset.special;
 
   if (command) {
@@ -3625,6 +3862,16 @@ refs.selectionBubble.addEventListener("click", (event) => {
 
   if (block) {
     applyBlock(block);
+    return;
+  }
+
+  if (color) {
+    applyTextColor(color);
+    return;
+  }
+
+  if (special === "inline-code") {
+    applyInlineCode();
     return;
   }
 
@@ -3689,6 +3936,7 @@ refs.insertMenu.addEventListener("click", (event) => {
 });
 
 refs.editor.addEventListener("mousedown", (event) => {
+  hideImageContextMenu();
   clearSelectAllScope();
 
   if (event.target.closest("a.editor-link") && (event.ctrlKey || event.metaKey)) {
@@ -3732,6 +3980,19 @@ refs.editor.addEventListener("mousedown", (event) => {
 
   clearSpecialSelection();
   collapseTransientGaps();
+});
+
+refs.editor.addEventListener("contextmenu", (event) => {
+  const imageNode = event.target.closest(".image-node");
+
+  if (!imageNode || !state.currentDocument || imageNode.classList.contains("missing")) {
+    hideImageContextMenu();
+    return;
+  }
+
+  event.preventDefault();
+  selectSpecialBlock(imageNode);
+  showImageContextMenu(event, imageNode);
 });
 
 refs.editor.addEventListener("input", (event) => {
@@ -3909,9 +4170,45 @@ refs.attachmentPreviewModal.addEventListener("click", (event) => {
   });
 });
 
+refs.imageContextMenu.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-image-menu-action]");
+
+  if (!button || !state.currentDocument) {
+    return;
+  }
+
+  const relativePath = refs.imageContextMenu.dataset.relativePath || state.imageContextMenuPath;
+  const action = button.dataset.imageMenuAction || "";
+  hideImageContextMenu();
+
+  if (action === "save-as") {
+    handleSaveImageAs(relativePath).catch((error) => {
+      reportError("图片另存为失败", error);
+    });
+    return;
+  }
+
+  if (action === "open") {
+    handleOpenImage(relativePath).catch((error) => {
+      reportError("打开图片失败", error);
+    });
+    return;
+  }
+
+  if (action === "reveal") {
+    handleRevealImageInFolder(relativePath).catch((error) => {
+      reportError("定位图片失败", error);
+    });
+  }
+});
+
 document.addEventListener("mousedown", (event) => {
   if (!event.target.closest("#blockHandle")) {
     hideInsertMenu();
+  }
+
+  if (!event.target.closest("#imageContextMenu")) {
+    hideImageContextMenu();
   }
 
   if (!event.target.closest(".editor-gap, #blockHandle, #selectionBubble")) {
@@ -3927,9 +4224,20 @@ document.addEventListener("mousedown", (event) => {
   }
 });
 
-window.addEventListener("resize", scheduleUiRefresh);
-window.addEventListener("scroll", scheduleUiRefresh, true);
+window.addEventListener("resize", () => {
+  hideImageContextMenu();
+  scheduleUiRefresh();
+});
+window.addEventListener(
+  "scroll",
+  () => {
+    hideImageContextMenu();
+    scheduleUiRefresh();
+  },
+  true,
+);
 window.addEventListener("focus", () => {
+  hideImageContextMenu();
   refreshDocumentPathFromDisk().catch((error) => {
     reportError("文档路径同步失败", error);
   });
@@ -3940,6 +4248,11 @@ window.addEventListener("focus", () => {
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !refs.imageContextMenu.classList.contains("hidden")) {
+    hideImageContextMenu();
+    return;
+  }
+
   if (event.key === "Escape" && !refs.attachmentPreviewModal.classList.contains("hidden")) {
     closeAttachmentPreview();
     return;
@@ -3988,6 +4301,7 @@ document.addEventListener("keydown", (event) => {
 
 updateAvailability();
 renderCurrentDocumentTags();
+renderDocumentOutline();
 renderLibraryView();
 loadDocumentLibrary().catch((error) => {
   reportError("加载文档库失败", error);

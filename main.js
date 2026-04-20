@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain } = require("electron");
+const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
@@ -683,6 +683,67 @@ function copyAttachmentToDownloads(documentPath, resourcePath) {
   };
 }
 
+async function saveResourceAs(browserWindow, documentPath, resourcePath, options = {}) {
+  const resolved = resolveResource(documentPath, resourcePath);
+
+  if (!resolved.exists) {
+    throw new Error("资源文件不存在，无法另存为。");
+  }
+
+  const defaultDirectory = app.getPath(options.defaultDirectoryKey || "pictures");
+  const result = await dialog.showSaveDialog(browserWindow, {
+    title: options.title || "资源另存为",
+    defaultPath: path.join(defaultDirectory, path.basename(resolved.absolutePath)),
+  });
+
+  if (result.canceled || !result.filePath) {
+    return { canceled: true };
+  }
+
+  fs.mkdirSync(path.dirname(result.filePath), { recursive: true });
+  fs.copyFileSync(resolved.absolutePath, result.filePath);
+
+  return {
+    canceled: false,
+    savedPath: result.filePath,
+    fileName: path.basename(result.filePath),
+  };
+}
+
+async function openResourceWithSystem(documentPath, resourcePath) {
+  const resolved = resolveResource(documentPath, resourcePath);
+
+  if (!resolved.exists) {
+    throw new Error("资源文件不存在，无法打开。");
+  }
+
+  const errorMessage = await shell.openPath(resolved.absolutePath);
+
+  if (errorMessage) {
+    throw new Error(errorMessage);
+  }
+
+  return {
+    success: true,
+    openedPath: resolved.absolutePath,
+  };
+}
+
+function revealResourceInFolder(documentPath, resourcePath) {
+  const resolved = resolveResource(documentPath, resourcePath);
+
+  if (!resolved.exists) {
+    throw new Error("资源文件不存在，无法在资源管理器中显示。");
+  }
+
+  shell.showItemInFolder(resolved.absolutePath);
+
+  return {
+    success: true,
+    absolutePath: resolved.absolutePath,
+  };
+}
+
 function getAttachmentPreviewKind(filePath) {
   const extension = path.extname(filePath || "").toLowerCase();
 
@@ -1016,6 +1077,34 @@ ipcMain.handle("resource:resolve", async (_event, payload) => {
   }
 
   return resolveResource(payload.docPath, payload.relativePath);
+});
+
+ipcMain.handle("resource:save-image-as", async (event, payload) => {
+  if (!payload || !payload.docPath || !payload.relativePath) {
+    throw new Error("无法另存图片：缺少文档路径或图片路径。");
+  }
+
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  return saveResourceAs(browserWindow, payload.docPath, payload.relativePath, {
+    title: "图片另存为",
+    defaultDirectoryKey: "pictures",
+  });
+});
+
+ipcMain.handle("resource:open-image", async (_event, payload) => {
+  if (!payload || !payload.docPath || !payload.relativePath) {
+    throw new Error("无法打开图片：缺少文档路径或图片路径。");
+  }
+
+  return openResourceWithSystem(payload.docPath, payload.relativePath);
+});
+
+ipcMain.handle("resource:reveal-image-in-folder", async (_event, payload) => {
+  if (!payload || !payload.docPath || !payload.relativePath) {
+    throw new Error("无法定位图片：缺少文档路径或图片路径。");
+  }
+
+  return revealResourceInFolder(payload.docPath, payload.relativePath);
 });
 
 ipcMain.handle("resource:download-attachment", async (_event, payload) => {

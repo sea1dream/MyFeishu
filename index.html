@@ -35,6 +35,13 @@
           </div>
         </div>
 
+        <div class="sidebar-card outline-card">
+          <div class="sidebar-card-head">
+            <h2>文档目录</h2>
+          </div>
+          <div id="docOutline" class="outline-list empty">打开文档后会根据标题自动生成目录</div>
+        </div>
+
         <div class="sidebar-card library-card">
           <div class="sidebar-card-head">
             <h2>本地文档库</h2>
@@ -81,10 +88,45 @@
               <button type="button" data-block="h3">标题 3</button>
               <button type="button" data-command="bold">加粗</button>
               <button type="button" data-command="italic">斜体</button>
+              <button type="button" data-command="underline">下划线</button>
+              <button type="button" data-command="strikeThrough">删除线</button>
+              <button type="button" class="selection-inline-code-button" data-special="inline-code">行内代码</button>
               <button type="button" data-command="insertUnorderedList">无序列表</button>
               <button type="button" data-command="insertOrderedList">有序列表</button>
               <button type="button" data-block="blockquote">引用</button>
               <button type="button" data-special="code-block">代码块</button>
+              <button
+                type="button"
+                class="selection-color-button"
+                data-color="#b65a3a"
+                style="--selection-color: #b65a3a"
+                aria-label="暖棕色"
+                title="暖棕色"
+              ></button>
+              <button
+                type="button"
+                class="selection-color-button"
+                data-color="#d06363"
+                style="--selection-color: #d06363"
+                aria-label="柔红色"
+                title="柔红色"
+              ></button>
+              <button
+                type="button"
+                class="selection-color-button"
+                data-color="#3f6fd1"
+                style="--selection-color: #3f6fd1"
+                aria-label="海蓝色"
+                title="海蓝色"
+              ></button>
+              <button
+                type="button"
+                class="selection-color-button"
+                data-color="#2f8b57"
+                style="--selection-color: #2f8b57"
+                aria-label="松绿色"
+                title="松绿色"
+              ></button>
             </div>
 
             <div id="blockHandle" class="block-handle hidden">
@@ -111,6 +153,12 @@
     </div>
 
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <div id="imageContextMenu" class="image-context-menu hidden" role="menu" aria-hidden="true">
+      <button type="button" data-image-menu-action="save-as">图片另存为</button>
+      <button type="button" data-image-menu-action="open">打开图片</button>
+      <button type="button" data-image-menu-action="reveal">在资源管理器中显示</button>
+    </div>
 
     <div id="attachmentPreviewModal" class="preview-modal hidden" aria-hidden="true">
       <div class="preview-modal-backdrop" data-preview-close></div>

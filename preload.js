@@ -22,6 +22,9 @@ contextBridge.exposeInMainWorld("flowDocApi", {
   insertAttachments: (docPath) => ipcRenderer.invoke("resource:insert-attachments", { docPath }),
   savePastedImage: (payload) => ipcRenderer.invoke("resource:save-pasted-image", payload),
   resolveResource: (payload) => ipcRenderer.invoke("resource:resolve", payload),
+  saveImageAs: (payload) => ipcRenderer.invoke("resource:save-image-as", payload),
+  openImage: (payload) => ipcRenderer.invoke("resource:open-image", payload),
+  revealImageInFolder: (payload) => ipcRenderer.invoke("resource:reveal-image-in-folder", payload),
   previewAttachment: (payload) => ipcRenderer.invoke("resource:preview-attachment", payload),
   downloadAttachment: (payload) => ipcRenderer.invoke("resource:download-attachment", payload),
   copyText: (text) => {
