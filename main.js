@@ -7,6 +7,60 @@ const { pathToFileURL } = require("node:url");
 const DOC_EXTENSION = ".flowdoc";
 const DOC_FILTERS = [{ name: "FlowDoc 文档", extensions: [DOC_EXTENSION.slice(1)] }];
 const APP_ID = "com.flowdoc.editor";
+const DOCUMENT_LIBRARY_FOLDER_NAME = "本地文档";
+const LIBRARY_UNTAGGED_LABEL = "未分类";
+const ATTACHMENT_PREVIEW_LIMIT = 256 * 1024;
+const IMAGE_PREVIEW_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"]);
+const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".markdown"]);
+const PDF_PREVIEW_EXTENSIONS = new Set([".pdf"]);
+const TEXT_PREVIEW_EXTENSIONS = new Set([
+  ".txt",
+  ".json",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".cjs",
+  ".mjs",
+  ".css",
+  ".html",
+  ".htm",
+  ".xml",
+  ".cs",
+  ".yml",
+  ".yaml",
+  ".toml",
+  ".ini",
+  ".cfg",
+  ".log",
+  ".csv",
+  ".tsv",
+  ".py",
+  ".java",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cxx",
+  ".h",
+  ".hpp",
+  ".hh",
+  ".sql",
+  ".sh",
+  ".bat",
+  ".ps1",
+  ".go",
+  ".rs",
+  ".php",
+  ".rb",
+  ".kt",
+  ".swift",
+  ".scala",
+  ".dart",
+  ".lua",
+  ".pl",
+]);
+const VIDEO_PREVIEW_EXTENSIONS = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
+const AUDIO_PREVIEW_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
 
 function getStorageRoot() {
   if (process.env.PORTABLE_EXECUTABLE_DIR) {
@@ -25,6 +79,10 @@ function getAssetDirectories() {
   };
 }
 
+function getDocumentLibraryRoot() {
+  return path.join(app.getPath("desktop"), DOCUMENT_LIBRARY_FOLDER_NAME);
+}
+
 function getLegacyStorageRoots() {
   return [...new Set([__dirname])];
 }
@@ -33,6 +91,10 @@ function ensureGlobalAssetDirectories() {
   Object.values(getAssetDirectories()).forEach((directory) => {
     fs.mkdirSync(directory, { recursive: true });
   });
+}
+
+function ensureDocumentLibraryRoot() {
+  fs.mkdirSync(getDocumentLibraryRoot(), { recursive: true });
 }
 
 function createWindow() {
@@ -58,6 +120,7 @@ function createWindow() {
 app.whenReady().then(() => {
   app.setAppUserModelId(APP_ID);
   ensureGlobalAssetDirectories();
+  ensureDocumentLibraryRoot();
   createWindow();
 
   app.on("activate", () => {
@@ -91,6 +154,40 @@ function normalizeDocumentTitle(title) {
   return normalized || "未命名文档";
 }
 
+function normalizeDocumentTag(tag) {
+  const normalized = String(tag || "").replace(/\s+/gu, " ").trim();
+  return normalized || "";
+}
+
+function normalizeDocumentTags(tags) {
+  const values = Array.isArray(tags)
+    ? tags
+    : typeof tags === "string"
+      ? tags.split(/[,，\n]/u)
+      : [];
+  const seen = new Set();
+  const normalized = [];
+
+  values.forEach((value) => {
+    const nextTag = normalizeDocumentTag(value);
+
+    if (!nextTag) {
+      return;
+    }
+
+    const key = nextTag.toLocaleLowerCase();
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    normalized.push(nextTag);
+  });
+
+  return normalized;
+}
+
 function escapeHtml(value) {
   return value
     .replaceAll("&", "&amp;")
@@ -118,22 +215,213 @@ function readDocument(filePath) {
     filePath,
     title: getDocumentTitleFromPath(filePath),
     html: data.html,
+    tags: normalizeDocumentTags(data.tags),
     version: data.version || 1,
     updatedAt: data.updatedAt || null,
   };
 }
 
-function writeDocument(filePath, html) {
+function writeDocument(filePath, html, options = {}) {
+  const preservedTags =
+    options.tags === undefined && fs.existsSync(filePath)
+      ? (() => {
+          try {
+            return readDocument(filePath).tags;
+          } catch (_error) {
+            return [];
+          }
+        })()
+      : [];
   const payload = {
     kind: "flowdoc",
     version: 1,
     updatedAt: new Date().toISOString(),
     html,
+    tags: normalizeDocumentTags(options.tags ?? preservedTags),
   };
 
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, JSON.stringify(payload, null, 2), "utf8");
   return payload;
+}
+
+function decodeHtmlAttribute(value) {
+  return String(value || "")
+    .replaceAll("&quot;", '"')
+    .replaceAll("&#39;", "'")
+    .replaceAll("&lt;", "<")
+    .replaceAll("&gt;", ">")
+    .replaceAll("&amp;", "&");
+}
+
+function normalizeStoredAttachmentPath(resourcePath) {
+  const normalized = decodeHtmlAttribute(resourcePath).split("\\").join("/").trim();
+  return normalized.startsWith("attachments/") ? normalized : "";
+}
+
+function extractAttachmentPathsFromHtml(html) {
+  const attachmentPaths = new Set();
+  const source = String(html || "");
+  const tagPattern = /<[^>]+>/gu;
+  let match = tagPattern.exec(source);
+
+  while (match) {
+    const tag = match[0];
+    const isAttachmentNode =
+      /data-kind\s*=\s*"attachment"/iu.test(tag) || /class\s*=\s*"[^"]*\battachment-node\b[^"]*"/iu.test(tag);
+
+    if (isAttachmentNode) {
+      const srcMatch = tag.match(/data-src\s*=\s*"([^"]+)"/iu);
+      const relativePath = normalizeStoredAttachmentPath(srcMatch?.[1] || "");
+
+      if (relativePath) {
+        attachmentPaths.add(relativePath);
+      }
+    }
+
+    match = tagPattern.exec(source);
+  }
+
+  return attachmentPaths;
+}
+
+function getAttachmentReferenceRoots(currentFilePath) {
+  return [
+    getDocumentLibraryRoot(),
+    path.dirname(currentFilePath || getDocumentLibraryRoot()),
+  ].filter((directory, index, collection) => {
+    const resolvedDirectory = path.resolve(directory);
+    return collection.findIndex((candidate) => path.resolve(candidate) === resolvedDirectory) === index;
+  });
+}
+
+function listReferenceDocuments(currentFilePath) {
+  const files = new Set();
+
+  getAttachmentReferenceRoots(currentFilePath).forEach((rootDirectory) => {
+    listFlowDocFiles(rootDirectory).forEach((filePath) => {
+      files.add(path.resolve(filePath));
+    });
+  });
+
+  return [...files];
+}
+
+function isAttachmentReferencedByAnyDocument(resourcePath, currentFilePath) {
+  const targetPath = normalizeStoredAttachmentPath(resourcePath);
+
+  if (!targetPath) {
+    return false;
+  }
+
+  return listReferenceDocuments(currentFilePath).some((filePath) => {
+    try {
+      const document = readDocument(filePath);
+      return extractAttachmentPathsFromHtml(document.html).has(targetPath);
+    } catch (_error) {
+      return false;
+    }
+  });
+}
+
+function cleanupRemovedAttachments(filePath, previousHtml, nextHtml) {
+  const previousPaths = extractAttachmentPathsFromHtml(previousHtml);
+  const nextPaths = extractAttachmentPathsFromHtml(nextHtml);
+  const removedPaths = [...previousPaths].filter((resourcePath) => !nextPaths.has(resourcePath));
+  const cleaned = [];
+
+  removedPaths.forEach((resourcePath) => {
+    if (isAttachmentReferencedByAnyDocument(resourcePath, filePath)) {
+      return;
+    }
+
+    const resolved = resolveResource(filePath, resourcePath);
+
+    if (!resolved.exists) {
+      return;
+    }
+
+    try {
+      fs.unlinkSync(resolved.absolutePath);
+      cleaned.push(resourcePath);
+    } catch (_error) {
+      // Ignore cleanup errors so the document save itself still succeeds.
+    }
+  });
+
+  return cleaned;
+}
+
+function listFilesRecursively(rootDirectory) {
+  if (!fs.existsSync(rootDirectory)) {
+    return [];
+  }
+
+  const results = [];
+  const pending = [rootDirectory];
+
+  while (pending.length) {
+    const currentDirectory = pending.pop();
+    const entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
+
+    entries.forEach((entry) => {
+      const fullPath = path.join(currentDirectory, entry.name);
+
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+        return;
+      }
+
+      if (entry.isFile()) {
+        results.push(fullPath);
+      }
+    });
+  }
+
+  return results;
+}
+
+function getReferencedAttachmentPaths(currentFilePath) {
+  const references = new Set();
+
+  listReferenceDocuments(currentFilePath).forEach((filePath) => {
+    try {
+      const document = readDocument(filePath);
+      extractAttachmentPathsFromHtml(document.html).forEach((resourcePath) => {
+        references.add(resourcePath);
+      });
+    } catch (_error) {
+      // Ignore broken documents during attachment cleanup.
+    }
+  });
+
+  return references;
+}
+
+function cleanupOrphanedAttachments(currentFilePath) {
+  const attachmentDirectory = getAssetDirectory("attachments");
+  const referencedPaths = getReferencedAttachmentPaths(currentFilePath);
+  const cleaned = [];
+
+  listFilesRecursively(attachmentDirectory).forEach((absolutePath) => {
+    const relativePath = buildStoredResourcePath(
+      "attachments",
+      path.relative(attachmentDirectory, absolutePath).split(path.sep).join("/"),
+    );
+
+    if (referencedPaths.has(relativePath)) {
+      return;
+    }
+
+    try {
+      fs.unlinkSync(absolutePath);
+      cleaned.push(relativePath);
+    } catch (_error) {
+      // Ignore cleanup errors so document save still succeeds.
+    }
+  });
+
+  return cleaned;
 }
 
 function findMovedDocumentPath(filePath, htmlSnapshot) {
@@ -162,6 +450,76 @@ function findMovedDocumentPath(filePath, htmlSnapshot) {
     });
 
   return matches.length === 1 ? matches[0] : null;
+}
+
+function listFlowDocFiles(rootDirectory) {
+  if (!fs.existsSync(rootDirectory)) {
+    return [];
+  }
+
+  const results = [];
+  const pending = [rootDirectory];
+
+  while (pending.length) {
+    const currentDirectory = pending.pop();
+    const entries = fs.readdirSync(currentDirectory, { withFileTypes: true });
+
+    entries.forEach((entry) => {
+      const fullPath = path.join(currentDirectory, entry.name);
+
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+        return;
+      }
+
+      if (entry.isFile() && path.extname(entry.name).toLowerCase() === DOC_EXTENSION) {
+        results.push(fullPath);
+      }
+    });
+  }
+
+  return results;
+}
+
+function compareLibraryDocuments(left, right) {
+  const leftTime = Date.parse(left.updatedAt || "") || 0;
+  const rightTime = Date.parse(right.updatedAt || "") || 0;
+
+  if (rightTime !== leftTime) {
+    return rightTime - leftTime;
+  }
+
+  return left.title.localeCompare(right.title, "zh-CN");
+}
+
+function indexDocumentLibrary() {
+  const rootPath = getDocumentLibraryRoot();
+  ensureDocumentLibraryRoot();
+  const documents = listFlowDocFiles(rootPath)
+    .map((filePath) => {
+      try {
+        const document = readDocument(filePath);
+        const relativePath = path.relative(rootPath, filePath).split(path.sep).join("/");
+
+        return {
+          filePath,
+          relativePath,
+          title: document.title,
+          tags: document.tags,
+          updatedAt: document.updatedAt,
+        };
+      } catch (_error) {
+        return null;
+      }
+    })
+    .filter(Boolean)
+    .sort(compareLibraryDocuments);
+
+  return {
+    rootPath,
+    untaggedLabel: LIBRARY_UNTAGGED_LABEL,
+    documents,
+  };
 }
 
 function splitBaseName(fileName) {
@@ -325,10 +683,104 @@ function copyAttachmentToDownloads(documentPath, resourcePath) {
   };
 }
 
+function getAttachmentPreviewKind(filePath) {
+  const extension = path.extname(filePath || "").toLowerCase();
+
+  if (IMAGE_PREVIEW_EXTENSIONS.has(extension)) {
+    return "image";
+  }
+
+  if (MARKDOWN_PREVIEW_EXTENSIONS.has(extension)) {
+    return "markdown";
+  }
+
+  if (PDF_PREVIEW_EXTENSIONS.has(extension)) {
+    return "pdf";
+  }
+
+  if (TEXT_PREVIEW_EXTENSIONS.has(extension)) {
+    return "text";
+  }
+
+  if (VIDEO_PREVIEW_EXTENSIONS.has(extension)) {
+    return "video";
+  }
+
+  if (AUDIO_PREVIEW_EXTENSIONS.has(extension)) {
+    return "audio";
+  }
+
+  return "unsupported";
+}
+
+function readTextPreview(filePath, limit = ATTACHMENT_PREVIEW_LIMIT) {
+  const fileSize = fs.statSync(filePath).size;
+  const targetSize = Math.min(fileSize, limit);
+  const buffer = Buffer.alloc(targetSize);
+  const fileHandle = fs.openSync(filePath, "r");
+
+  try {
+    fs.readSync(fileHandle, buffer, 0, targetSize, 0);
+  } finally {
+    fs.closeSync(fileHandle);
+  }
+
+  return {
+    content: buffer.toString("utf8"),
+    truncated: fileSize > limit,
+    size: fileSize,
+  };
+}
+
+function previewAttachment(documentPath, resourcePath) {
+  const resolved = resolveResource(documentPath, resourcePath);
+  const previewKind = getAttachmentPreviewKind(resolved.absolutePath);
+
+  if (!resolved.exists) {
+    return {
+      exists: false,
+      previewable: false,
+      previewKind,
+      name: resolved.name,
+      absolutePath: resolved.absolutePath,
+      fileUrl: null,
+      size: 0,
+    };
+  }
+
+  const stat = fs.statSync(resolved.absolutePath);
+
+  if (previewKind === "text" || previewKind === "markdown") {
+    const textPreview = readTextPreview(resolved.absolutePath);
+
+    return {
+      exists: true,
+      previewable: true,
+      previewKind,
+      name: resolved.name,
+      absolutePath: resolved.absolutePath,
+      fileUrl: resolved.fileUrl,
+      size: textPreview.size,
+      content: textPreview.content,
+      truncated: textPreview.truncated,
+    };
+  }
+
+  return {
+    exists: true,
+    previewable: previewKind !== "unsupported",
+    previewKind,
+    name: resolved.name,
+    absolutePath: resolved.absolutePath,
+    fileUrl: resolved.fileUrl,
+    size: stat.size,
+  };
+}
+
 async function askDocumentPathForCreate(browserWindow) {
   const result = await dialog.showSaveDialog(browserWindow, {
     title: "选择新文档的位置",
-    defaultPath: path.join(app.getPath("documents"), `未命名文档${DOC_EXTENSION}`),
+    defaultPath: path.join(getDocumentLibraryRoot(), `未命名文档${DOC_EXTENSION}`),
     filters: DOC_FILTERS,
   });
 
@@ -366,7 +818,7 @@ ipcMain.handle("document:new", async (event) => {
   }
 
   const html = getDefaultHtml(selection.filePath);
-  writeDocument(selection.filePath, html);
+  writeDocument(selection.filePath, html, { tags: [] });
 
   return {
     canceled: false,
@@ -374,6 +826,7 @@ ipcMain.handle("document:new", async (event) => {
       filePath: selection.filePath,
       title: getDocumentTitleFromPath(selection.filePath),
       html,
+      tags: [],
     },
   };
 });
@@ -382,6 +835,7 @@ ipcMain.handle("document:open", async (event) => {
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
   const result = await dialog.showOpenDialog(browserWindow, {
     title: "打开文档",
+    defaultPath: getDocumentLibraryRoot(),
     filters: DOC_FILTERS,
     properties: ["openFile"],
   });
@@ -394,13 +848,38 @@ ipcMain.handle("document:open", async (event) => {
   return { canceled: false, document };
 });
 
+ipcMain.handle("document:open-path", async (_event, payload) => {
+  if (!payload || !payload.filePath) {
+    throw new Error("打开文档失败：缺少文档路径。");
+  }
+
+  return readDocument(ensureDocumentExtension(payload.filePath));
+});
+
 ipcMain.handle("document:save", async (_event, payload) => {
   if (!payload || !payload.filePath || typeof payload.html !== "string") {
     throw new Error("保存失败：缺少文档路径或内容。");
   }
 
-  const saved = writeDocument(payload.filePath, payload.html);
-  return { success: true, updatedAt: saved.updatedAt };
+  const filePath = ensureDocumentExtension(payload.filePath);
+  const previousHtml =
+    fs.existsSync(filePath)
+      ? (() => {
+          try {
+            return readDocument(filePath).html;
+          } catch (_error) {
+            return "";
+          }
+        })()
+      : "";
+  const saved = writeDocument(filePath, payload.html, { tags: payload.tags });
+  const cleanedAttachments = [
+    ...new Set([
+      ...cleanupRemovedAttachments(filePath, previousHtml, payload.html),
+      ...cleanupOrphanedAttachments(filePath),
+    ]),
+  ];
+  return { success: true, updatedAt: saved.updatedAt, cleanedAttachments };
 });
 
 ipcMain.handle("document:refresh-path", async (_event, payload) => {
@@ -545,4 +1024,16 @@ ipcMain.handle("resource:download-attachment", async (_event, payload) => {
   }
 
   return copyAttachmentToDownloads(payload.docPath, payload.relativePath);
+});
+
+ipcMain.handle("resource:preview-attachment", async (_event, payload) => {
+  if (!payload || !payload.docPath || !payload.relativePath) {
+    throw new Error("无法预览附件：缺少文档路径或资源路径。");
+  }
+
+  return previewAttachment(payload.docPath, payload.relativePath);
+});
+
+ipcMain.handle("library:index", async () => {
+  return indexDocumentLibrary();
 });

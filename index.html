@@ -24,6 +24,28 @@
           <button id="saveDocButton" type="button">立即保存</button>
         </div>
 
+        <div class="sidebar-card">
+          <div class="sidebar-card-head">
+            <h2>当前标签</h2>
+          </div>
+          <div id="docTags" class="tag-list empty">打开文档后可以为它添加标签</div>
+          <div class="tag-input-row">
+            <input id="tagInput" type="text" placeholder="输入标签后回车或点击添加" />
+            <button id="addTagButton" type="button">添加</button>
+          </div>
+        </div>
+
+        <div class="sidebar-card library-card">
+          <div class="sidebar-card-head">
+            <h2>本地文档库</h2>
+            <button id="refreshLibraryButton" type="button">刷新</button>
+          </div>
+          <p id="libraryRootPath" class="library-root-path">正在读取文档库...</p>
+          <input id="librarySearchInput" type="text" placeholder="按标题、路径或标签搜索" />
+          <div id="libraryTagFilters" class="tag-filter-list"></div>
+          <div id="libraryDocList" class="library-doc-list"></div>
+        </div>
+
         <div class="sidebar-card muted">
           <h2>快捷键</h2>
           <p><kbd>Ctrl</kbd> + <kbd>S</kbd> 立即保存</p>
@@ -89,6 +111,26 @@
     </div>
 
     <div id="toast" class="toast hidden" role="status" aria-live="polite"></div>
+
+    <div id="attachmentPreviewModal" class="preview-modal hidden" aria-hidden="true">
+      <div class="preview-modal-backdrop" data-preview-close></div>
+      <section class="preview-modal-dialog" role="dialog" aria-modal="true" aria-labelledby="attachmentPreviewTitle">
+        <header class="preview-modal-head">
+          <div class="preview-modal-copy">
+            <div class="preview-modal-eyebrow">附件预览</div>
+            <h2 id="attachmentPreviewTitle">未选择附件</h2>
+            <p id="attachmentPreviewMeta" class="preview-modal-meta"></p>
+          </div>
+
+          <div class="preview-modal-actions">
+            <button id="attachmentPreviewDownload" type="button">下载到 Downloads</button>
+            <button id="attachmentPreviewClose" type="button">关闭</button>
+          </div>
+        </header>
+
+        <div id="attachmentPreviewBody" class="preview-modal-body"></div>
+      </section>
+    </div>
 
     <script type="module" src="./renderer.js"></script>
   </body>

@@ -21,6 +21,102 @@ const CODE_COPY_FEEDBACK_DELAY = 1800;
 const BLOCK_HANDLE_WIDTH = 42;
 const BLOCK_HANDLE_HEIGHT = 42;
 const BLOCK_HANDLE_GAP = 10;
+const SPECIAL_BLOCK_SELECTOR = ".image-node, .attachment-node, .code-block-node, .video-embed-node";
+const LINK_OPEN_HINT = "Ctrl/Cmd+点击打开，双击修改链接";
+const VIDEO_IFRAME_ALLOW =
+  "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
+const LIBRARY_UNTAGGED_FILTER = "__UNTAGGED__";
+const ATTACHMENT_IMAGE_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"]);
+const ATTACHMENT_MARKDOWN_EXTENSIONS = new Set([".md", ".markdown"]);
+const ATTACHMENT_TEXT_EXTENSIONS = new Set([
+  ".txt",
+  ".json",
+  ".js",
+  ".jsx",
+  ".ts",
+  ".tsx",
+  ".cjs",
+  ".mjs",
+  ".css",
+  ".html",
+  ".htm",
+  ".xml",
+  ".cs",
+  ".yml",
+  ".yaml",
+  ".toml",
+  ".ini",
+  ".cfg",
+  ".log",
+  ".csv",
+  ".tsv",
+  ".py",
+  ".java",
+  ".c",
+  ".cc",
+  ".cpp",
+  ".cxx",
+  ".h",
+  ".hpp",
+  ".hh",
+  ".sql",
+  ".sh",
+  ".bat",
+  ".ps1",
+  ".go",
+  ".rs",
+  ".php",
+  ".rb",
+  ".kt",
+  ".swift",
+  ".scala",
+  ".dart",
+  ".lua",
+  ".pl",
+]);
+const ATTACHMENT_PDF_EXTENSIONS = new Set([".pdf"]);
+const ATTACHMENT_VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
+const ATTACHMENT_AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
+const ATTACHMENT_CODE_LANGUAGE_BY_EXTENSION = new Map([
+  [".c", "c"],
+  [".cc", "cpp"],
+  [".cpp", "cpp"],
+  [".cxx", "cpp"],
+  [".h", "cpp"],
+  [".hh", "cpp"],
+  [".hpp", "cpp"],
+  [".cs", "csharp"],
+  [".py", "python"],
+  [".java", "java"],
+  [".js", "javascript"],
+  [".jsx", "javascript"],
+  [".cjs", "javascript"],
+  [".mjs", "javascript"],
+  [".ts", "typescript"],
+  [".tsx", "typescript"],
+  [".json", "json"],
+  [".html", "xml"],
+  [".htm", "xml"],
+  [".xml", "xml"],
+  [".css", "css"],
+  [".sql", "sql"],
+  [".sh", "bash"],
+  [".bat", "dos"],
+  [".ps1", "powershell"],
+  [".go", "go"],
+  [".rs", "rust"],
+  [".php", "php"],
+  [".rb", "ruby"],
+  [".kt", "kotlin"],
+  [".swift", "swift"],
+  [".scala", "scala"],
+  [".dart", "dart"],
+  [".lua", "lua"],
+  [".pl", "perl"],
+  [".yml", "yaml"],
+  [".yaml", "yaml"],
+  [".toml", "ini"],
+]);
 
 const state = {
   currentDocument: null,
@@ -30,6 +126,7 @@ const state = {
   toastTimer: null,
   savedSelection: null,
   lastSavedHtml: "",
+  lastSavedTags: [],
   uiFrame: null,
   titleSyncPromise: null,
   history: {
@@ -39,12 +136,28 @@ const state = {
   },
   selectedSpecialNodeId: null,
   selectAllScope: null,
+  library: {
+    rootPath: "",
+    documents: [],
+    untaggedLabel: "未分类",
+    selectedTag: "",
+    searchText: "",
+  },
+  attachmentPreview: null,
 };
 
 const refs = {
   newDocButton: document.getElementById("newDocButton"),
   openDocButton: document.getElementById("openDocButton"),
   saveDocButton: document.getElementById("saveDocButton"),
+  docTags: document.getElementById("docTags"),
+  tagInput: document.getElementById("tagInput"),
+  addTagButton: document.getElementById("addTagButton"),
+  libraryRootPath: document.getElementById("libraryRootPath"),
+  librarySearchInput: document.getElementById("librarySearchInput"),
+  libraryTagFilters: document.getElementById("libraryTagFilters"),
+  libraryDocList: document.getElementById("libraryDocList"),
+  refreshLibraryButton: document.getElementById("refreshLibraryButton"),
   editorSurface: document.getElementById("editorSurface"),
   editor: document.getElementById("editor"),
   emptyState: document.getElementById("emptyState"),
@@ -56,6 +169,12 @@ const refs = {
   blockHandleButton: document.getElementById("blockHandleButton"),
   insertMenu: document.getElementById("insertMenu"),
   toast: document.getElementById("toast"),
+  attachmentPreviewModal: document.getElementById("attachmentPreviewModal"),
+  attachmentPreviewTitle: document.getElementById("attachmentPreviewTitle"),
+  attachmentPreviewMeta: document.getElementById("attachmentPreviewMeta"),
+  attachmentPreviewBody: document.getElementById("attachmentPreviewBody"),
+  attachmentPreviewClose: document.getElementById("attachmentPreviewClose"),
+  attachmentPreviewDownload: document.getElementById("attachmentPreviewDownload"),
 };
 
 function setStatus(message, tone = "") {
@@ -87,10 +206,124 @@ function hideBlockHandle() {
   hideInsertMenu();
 }
 
+function clearAttachmentPreviewContent() {
+  refs.attachmentPreviewBody.innerHTML = "";
+}
+
+function closeAttachmentPreview() {
+  clearAttachmentPreviewContent();
+  refs.attachmentPreviewModal.classList.add("hidden");
+  refs.attachmentPreviewModal.setAttribute("aria-hidden", "true");
+  refs.attachmentPreviewDownload.disabled = true;
+  refs.attachmentPreviewDownload.dataset.relativePath = "";
+  refs.attachmentPreviewMeta.textContent = "";
+  refs.attachmentPreviewTitle.textContent = "未选择附件";
+  state.attachmentPreview = null;
+}
+
+function openAttachmentPreview(preview, relativePath) {
+  refs.attachmentPreviewTitle.textContent = preview.name || "附件";
+  refs.attachmentPreviewMeta.textContent = [relativePath, formatFileSize(preview.size)]
+    .filter(Boolean)
+    .join(" | ");
+  refs.attachmentPreviewDownload.disabled = false;
+  refs.attachmentPreviewDownload.dataset.relativePath = relativePath;
+  refs.attachmentPreviewModal.classList.remove("hidden");
+  refs.attachmentPreviewModal.setAttribute("aria-hidden", "false");
+  clearAttachmentPreviewContent();
+
+  const body = refs.attachmentPreviewBody;
+  const kind = preview.previewKind;
+
+  if (kind === "image") {
+    const wrap = document.createElement("div");
+    wrap.className = "preview-image-wrap";
+    const image = document.createElement("img");
+    image.src = preview.fileUrl;
+    image.alt = preview.name || "attachment preview";
+    wrap.append(image);
+    body.append(wrap);
+  } else if (kind === "pdf") {
+    const wrap = document.createElement("div");
+    wrap.className = "preview-pdf-wrap";
+    const frame = document.createElement("iframe");
+    frame.className = "preview-pdf-frame";
+    frame.src = `${preview.fileUrl}#toolbar=0&navpanes=0&scrollbar=0`;
+    frame.title = preview.name || "PDF preview";
+    wrap.append(frame);
+    body.append(wrap);
+  } else if (kind === "video") {
+    const wrap = document.createElement("div");
+    wrap.className = "preview-video-wrap";
+    const video = document.createElement("video");
+    video.src = preview.fileUrl;
+    video.controls = true;
+    video.preload = "metadata";
+    wrap.append(video);
+    body.append(wrap);
+  } else if (kind === "audio") {
+    const wrap = document.createElement("div");
+    wrap.className = "preview-audio-wrap";
+    const audio = document.createElement("audio");
+    audio.src = preview.fileUrl;
+    audio.controls = true;
+    audio.preload = "metadata";
+    wrap.append(audio);
+    body.append(wrap);
+  } else if (kind === "markdown") {
+    if (preview.truncated) {
+      const note = document.createElement("p");
+      note.className = "preview-text-note";
+      note.textContent = "Markdown preview is truncated to the first 256 KB.";
+      body.append(note);
+    }
+
+    const article = document.createElement("article");
+    article.className = "preview-markdown";
+    article.innerHTML = renderMarkdownPreview(preview.content || "", {
+      baseUrl: preview.fileUrl || "",
+    });
+    body.append(article);
+  } else if (kind === "text") {
+    if (preview.truncated) {
+      const note = document.createElement("p");
+      note.className = "preview-text-note";
+      note.textContent = "文件较大，当前只预览前 256 KB 内容。";
+      body.append(note);
+    }
+
+    const codeLanguage = getAttachmentPreviewCodeLanguage(preview.name || relativePath);
+
+    if (codeLanguage) {
+      const container = document.createElement("div");
+      container.className = "preview-code-file";
+      container.innerHTML = renderMarkdownCodeBlock(preview.content || "", codeLanguage);
+      body.append(container);
+    } else {
+      const pre = document.createElement("pre");
+      pre.className = "preview-text";
+      pre.textContent = preview.content || "";
+      body.append(pre);
+    }
+  } else {
+    const empty = document.createElement("div");
+    empty.className = "preview-empty";
+    empty.textContent = "当前附件暂不支持预览。";
+    body.append(empty);
+  }
+
+  state.attachmentPreview = {
+    relativePath,
+    name: preview.name || "",
+  };
+}
+
 function updateAvailability() {
   const enabled = Boolean(state.currentDocument);
   refs.saveDocButton.disabled = !enabled;
   refs.editor.contentEditable = enabled ? "true" : "false";
+  refs.tagInput.disabled = !enabled;
+  refs.addTagButton.disabled = !enabled;
 
   if (!enabled) {
     hideSelectionBubble();
@@ -107,6 +340,537 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
+function getPathExtension(value) {
+  const normalized = String(value || "").split(/[?#]/u, 1)[0];
+  const match = normalized.match(/(\.[^.\\/]+)$/u);
+  return match ? match[1].toLowerCase() : "";
+}
+
+function getAttachmentPreviewKind(value) {
+  const extension = getPathExtension(value);
+
+  if (ATTACHMENT_IMAGE_EXTENSIONS.has(extension)) {
+    return "image";
+  }
+
+  if (ATTACHMENT_MARKDOWN_EXTENSIONS.has(extension)) {
+    return "markdown";
+  }
+
+  if (ATTACHMENT_PDF_EXTENSIONS.has(extension)) {
+    return "pdf";
+  }
+
+  if (ATTACHMENT_TEXT_EXTENSIONS.has(extension)) {
+    return "text";
+  }
+
+  if (ATTACHMENT_VIDEO_EXTENSIONS.has(extension)) {
+    return "video";
+  }
+
+  if (ATTACHMENT_AUDIO_EXTENSIONS.has(extension)) {
+    return "audio";
+  }
+
+  return "";
+}
+
+function getAttachmentPreviewCodeLanguage(value) {
+  return ATTACHMENT_CODE_LANGUAGE_BY_EXTENSION.get(getPathExtension(value)) || "";
+}
+
+function formatFileSize(value) {
+  const bytes = Number(value);
+
+  if (!Number.isFinite(bytes) || bytes < 0) {
+    return "";
+  }
+
+  if (bytes < 1024) {
+    return `${bytes} B`;
+  }
+
+  if (bytes < 1024 * 1024) {
+    return `${(bytes / 1024).toFixed(bytes >= 10 * 1024 ? 0 : 1)} KB`;
+  }
+
+  if (bytes < 1024 * 1024 * 1024) {
+    return `${(bytes / (1024 * 1024)).toFixed(bytes >= 100 * 1024 * 1024 ? 0 : 1)} MB`;
+  }
+
+  return `${(bytes / (1024 * 1024 * 1024)).toFixed(1)} GB`;
+}
+
+function resolveMarkdownPreviewUrl(target, baseUrl) {
+  const rawTarget = normalizeCodeText(target || "").trim();
+
+  if (!rawTarget) {
+    return "";
+  }
+
+  try {
+    const resolved = new URL(rawTarget, baseUrl || window.location.href);
+
+    if (!["http:", "https:", "file:", "mailto:", "tel:", "data:"].includes(resolved.protocol)) {
+      return "";
+    }
+
+    if (resolved.protocol === "data:" && !resolved.href.startsWith("data:image/")) {
+      return "";
+    }
+
+    return resolved.toString();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function createMarkdownTokenStore() {
+  const tokens = [];
+
+  return {
+    stash(html) {
+      const marker = `@@MDTOKEN${tokens.length}@@`;
+      tokens.push(html);
+      return marker;
+    },
+    restore(text) {
+      return text.replace(/@@MDTOKEN(\d+)@@/gu, (_match, index) => tokens[Number(index)] || "");
+    },
+  };
+}
+
+function renderMarkdownInline(markdown, options = {}) {
+  const tokenStore = createMarkdownTokenStore();
+  const baseUrl = options.baseUrl || "";
+  let html = normalizeCodeText(markdown || "");
+
+  html = html.replace(/!\[([^\]]*)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/gu, (_match, alt, target, title) => {
+    const resolvedUrl = resolveMarkdownPreviewUrl(target, baseUrl);
+
+    if (!resolvedUrl) {
+      return tokenStore.stash(`<span>${escapeHtml(alt || target)}</span>`);
+    }
+
+    const safeAlt = escapeHtml(alt || "");
+    const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+    return tokenStore.stash(
+      `<img class="preview-markdown-inline-image" src="${escapeHtml(resolvedUrl)}" alt="${safeAlt}"${titleAttr} />`,
+    );
+  });
+
+  html = html.replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"([^"]*)")?\)/gu, (_match, label, target, title) => {
+    const resolvedUrl = resolveMarkdownPreviewUrl(target, baseUrl);
+    const safeLabel = escapeHtml(label);
+
+    if (!resolvedUrl) {
+      return tokenStore.stash(`<span>${safeLabel}</span>`);
+    }
+
+    const titleAttr = title ? ` title="${escapeHtml(title)}"` : "";
+    return tokenStore.stash(
+      `<a href="${escapeHtml(resolvedUrl)}" target="_blank" rel="noopener noreferrer"${titleAttr}>${safeLabel}</a>`,
+    );
+  });
+
+  html = html.replace(/`([^`\n]+)`/gu, (_match, code) => {
+    return tokenStore.stash(`<code>${escapeHtml(code)}</code>`);
+  });
+
+  html = escapeHtml(html);
+  html = html.replace(/\*\*([^*\n]+)\*\*/gu, "<strong>$1</strong>");
+  html = html.replace(/__([^_\n]+)__/gu, "<strong>$1</strong>");
+  html = html.replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/gu, "$1<em>$2</em>");
+  html = html.replace(/(^|[^_])_([^_\n]+)_(?!_)/gu, "$1<em>$2</em>");
+  return tokenStore.restore(html);
+}
+
+function isMarkdownFence(line) {
+  const match = line.match(/^\s*(```+|~~~+)\s*([\w#+.-]*)\s*$/u);
+
+  if (!match) {
+    return null;
+  }
+
+  return {
+    marker: match[1],
+    language: match[2] || "auto",
+  };
+}
+
+function isMarkdownHorizontalRule(line) {
+  return /^\s{0,3}(?:-\s*){3,}$|^\s{0,3}(?:_\s*){3,}$|^\s{0,3}(?:\*\s*){3,}$/u.test(line);
+}
+
+function isMarkdownListItem(line) {
+  const unordered = line.match(/^\s*[-+*]\s+(.+)$/u);
+
+  if (unordered) {
+    return {
+      ordered: false,
+      content: unordered[1],
+    };
+  }
+
+  const ordered = line.match(/^\s*\d+[.)]\s+(.+)$/u);
+
+  if (!ordered) {
+    return null;
+  }
+
+  return {
+    ordered: true,
+    content: ordered[1],
+  };
+}
+
+function renderMarkdownCodeBlock(code, language) {
+  const rawCode = normalizeCodeText(code);
+  const highlighted = api.highlightCode({
+    code: rawCode,
+    language: language || "auto",
+  });
+  const safeLanguage = escapeHtml(highlighted.detectedLanguage || language || "text");
+
+  return `
+    <div class="preview-markdown-code-wrap">
+      <div class="preview-markdown-code-head">
+        <div class="preview-markdown-code-label">${safeLanguage}</div>
+        <button type="button" class="code-copy-button" data-action="copy-preview-code">Copy</button>
+      </div>
+      <pre class="preview-markdown-code"><code class="hljs">${highlighted.html}</code></pre>
+    </div>
+  `;
+}
+
+function renderMarkdownPreview(markdown, options = {}) {
+  const baseUrl = options.baseUrl || "";
+  const lines = normalizeCodeText(markdown || "").split("\n");
+  const blocks = [];
+  let index = 0;
+
+  while (index < lines.length) {
+    const line = lines[index];
+
+    if (/^\s*$/u.test(line)) {
+      index += 1;
+      continue;
+    }
+
+    const fence = isMarkdownFence(line);
+
+    if (fence) {
+      const codeLines = [];
+      index += 1;
+
+      while (index < lines.length && !lines[index].startsWith(fence.marker)) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+
+      if (index < lines.length) {
+        index += 1;
+      }
+
+      blocks.push(renderMarkdownCodeBlock(codeLines.join("\n"), fence.language));
+      continue;
+    }
+
+    const heading = line.match(/^\s{0,3}(#{1,6})\s+(.*)$/u);
+
+    if (heading) {
+      const level = Math.min(heading[1].length, 6);
+      blocks.push(`<h${level}>${renderMarkdownInline(heading[2], { baseUrl })}</h${level}>`);
+      index += 1;
+      continue;
+    }
+
+    if (isMarkdownHorizontalRule(line)) {
+      blocks.push("<hr />");
+      index += 1;
+      continue;
+    }
+
+    if (/^\s*>/u.test(line)) {
+      const quoteLines = [];
+
+      while (index < lines.length && /^\s*>/u.test(lines[index])) {
+        quoteLines.push(lines[index].replace(/^\s*>\s?/u, ""));
+        index += 1;
+      }
+
+      blocks.push(`<blockquote>${renderMarkdownPreview(quoteLines.join("\n"), { baseUrl })}</blockquote>`);
+      continue;
+    }
+
+    const listItem = isMarkdownListItem(line);
+
+    if (listItem) {
+      const ordered = listItem.ordered;
+      const items = [];
+
+      while (index < lines.length) {
+        const currentLine = lines[index];
+        const currentItem = isMarkdownListItem(currentLine);
+
+        if (!currentItem || currentItem.ordered !== ordered) {
+          break;
+        }
+
+        let content = currentItem.content;
+        index += 1;
+
+        while (index < lines.length && /^\s{2,}\S/u.test(lines[index]) && !isMarkdownListItem(lines[index])) {
+          content += `\n${lines[index].trim()}`;
+          index += 1;
+        }
+
+        items.push(`<li>${renderMarkdownInline(content, { baseUrl }).replace(/\n/gu, "<br />")}</li>`);
+      }
+
+      blocks.push(`<${ordered ? "ol" : "ul"}>${items.join("")}</${ordered ? "ol" : "ul"}>`);
+      continue;
+    }
+
+    const paragraphLines = [line];
+    index += 1;
+
+    while (index < lines.length) {
+      const nextLine = lines[index];
+
+      if (
+        /^\s*$/u.test(nextLine) ||
+        isMarkdownFence(nextLine) ||
+        /^\s{0,3}(#{1,6})\s+/u.test(nextLine) ||
+        /^\s*>/u.test(nextLine) ||
+        isMarkdownListItem(nextLine) ||
+        isMarkdownHorizontalRule(nextLine)
+      ) {
+        break;
+      }
+
+      paragraphLines.push(nextLine);
+      index += 1;
+    }
+
+    blocks.push(`<p>${renderMarkdownInline(paragraphLines.join("\n"), { baseUrl }).replace(/\n/gu, "<br />")}</p>`);
+  }
+
+  return blocks.join("");
+}
+
+function normalizeExternalUrl(value) {
+  const raw = normalizeCodeText(value || "").trim();
+
+  if (!raw) {
+    return "";
+  }
+
+  const candidate =
+    /^(https?:\/\/|mailto:|tel:)/iu.test(raw) ? raw : /^www\./iu.test(raw) ? `https://${raw}` : "";
+
+  if (!candidate) {
+    return "";
+  }
+
+  try {
+    const url = new URL(candidate);
+
+    if (!["http:", "https:", "mailto:", "tel:"].includes(url.protocol)) {
+      return "";
+    }
+
+    return url.toString();
+  } catch (_error) {
+    return "";
+  }
+}
+
+function unwrapElementPreservingChildren(element) {
+  if (!element?.parentNode) {
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+
+  while (element.firstChild) {
+    fragment.append(element.firstChild);
+  }
+
+  element.replaceWith(fragment);
+}
+
+function normalizeAnchorElement(anchor) {
+  if (!anchor) {
+    return false;
+  }
+
+  const href = normalizeExternalUrl(anchor.getAttribute("href") || anchor.dataset.href || anchor.textContent);
+
+  if (!href) {
+    unwrapElementPreservingChildren(anchor);
+    return false;
+  }
+
+  anchor.classList.add("editor-link");
+  anchor.setAttribute("href", href);
+  anchor.dataset.href = href;
+  anchor.setAttribute("target", "_blank");
+  anchor.setAttribute("rel", "noopener noreferrer");
+  anchor.setAttribute("title", LINK_OPEN_HINT);
+  anchor.removeAttribute("contenteditable");
+
+  if (!normalizeCodeText(anchor.textContent).trim()) {
+    anchor.textContent = href;
+  }
+
+  return true;
+}
+
+function normalizeInlineLinks(root = refs.editor) {
+  root.querySelectorAll("a").forEach((anchor) => {
+    normalizeAnchorElement(anchor);
+  });
+}
+
+function buildLibraryTagSummary(documents = state.library.documents) {
+  const counts = new Map();
+  let untaggedCount = 0;
+
+  documents.forEach((documentItem) => {
+    const tags = normalizeTagList(documentItem.tags);
+
+    if (!tags.length) {
+      untaggedCount += 1;
+      return;
+    }
+
+    tags.forEach((tag) => {
+      counts.set(tag, (counts.get(tag) || 0) + 1);
+    });
+  });
+
+  const tags = [...counts.entries()]
+    .sort((left, right) => {
+      if (right[1] !== left[1]) {
+        return right[1] - left[1];
+      }
+
+      return left[0].localeCompare(right[0], "zh-CN");
+    })
+    .map(([tag, count]) => ({ tag, count }));
+
+  if (untaggedCount > 0) {
+    tags.push({ tag: LIBRARY_UNTAGGED_FILTER, count: untaggedCount, label: state.library.untaggedLabel });
+  }
+
+  return tags;
+}
+
+function getFilteredLibraryDocuments() {
+  const keyword = normalizeCodeText(state.library.searchText || "").toLocaleLowerCase();
+
+  return state.library.documents.filter((documentItem) => {
+    const tags = normalizeTagList(documentItem.tags);
+    const matchesTag =
+      !state.library.selectedTag ||
+      (state.library.selectedTag === LIBRARY_UNTAGGED_FILTER ? !tags.length : tags.includes(state.library.selectedTag));
+
+    if (!matchesTag) {
+      return false;
+    }
+
+    if (!keyword) {
+      return true;
+    }
+
+    const haystack = [documentItem.title, documentItem.relativePath, tags.join(" ")]
+      .join(" ")
+      .toLocaleLowerCase();
+    return haystack.includes(keyword);
+  });
+}
+
+function renderCurrentDocumentTags() {
+  if (!refs.docTags) {
+    return;
+  }
+
+  const tags = normalizeTagList(state.currentDocument?.tags);
+
+  if (!state.currentDocument) {
+    refs.docTags.className = "tag-list empty";
+    refs.docTags.textContent = "打开文档后可以为它添加标签";
+    return;
+  }
+
+  if (!tags.length) {
+    refs.docTags.className = "tag-list empty";
+    refs.docTags.textContent = "当前文档还没有标签";
+    return;
+  }
+
+  refs.docTags.className = "tag-list";
+  refs.docTags.innerHTML = tags
+    .map(
+      (tag) =>
+        `<span class="tag-chip">${escapeHtml(tag)}<button type="button" data-remove-tag="${escapeHtml(tag)}" aria-label="移除标签 ${escapeHtml(tag)}">×</button></span>`,
+    )
+    .join("");
+}
+
+function renderLibraryView() {
+  if (!refs.libraryRootPath || !refs.libraryTagFilters || !refs.libraryDocList) {
+    return;
+  }
+
+  refs.libraryRootPath.textContent = state.library.rootPath || "未找到文档库目录";
+
+  const tagSummary = buildLibraryTagSummary();
+  const activeTag = state.library.selectedTag;
+  const filteredDocuments = getFilteredLibraryDocuments();
+
+  refs.libraryTagFilters.className = tagSummary.length ? "tag-filter-list" : "tag-filter-list empty";
+  refs.libraryTagFilters.innerHTML = tagSummary.length
+    ? [
+        `<button type="button" class="tag-filter-button${activeTag ? "" : " is-active"}" data-library-tag="">全部 (${state.library.documents.length})</button>`,
+        ...tagSummary.map((item) => {
+          const value = item.tag === LIBRARY_UNTAGGED_FILTER ? LIBRARY_UNTAGGED_FILTER : item.tag;
+          const label = item.label || item.tag;
+          const activeClass = activeTag === value ? " is-active" : "";
+
+          return `<button type="button" class="tag-filter-button${activeClass}" data-library-tag="${escapeHtml(value)}">${escapeHtml(label)} (${item.count})</button>`;
+        }),
+      ].join("")
+    : "当前文档库中还没有可筛选的标签";
+
+  if (!filteredDocuments.length) {
+    refs.libraryDocList.innerHTML = `<div class="library-doc-meta">没有匹配当前筛选条件的文档</div>`;
+    return;
+  }
+
+  refs.libraryDocList.innerHTML = filteredDocuments
+    .map((documentItem) => {
+      const isActive =
+        state.currentDocument && state.currentDocument.filePath === documentItem.filePath ? " is-active" : "";
+      const tags = normalizeTagList(documentItem.tags);
+      const tagMarkup = tags.length
+        ? tags.map((tag) => `<span class="library-doc-tag">${escapeHtml(tag)}</span>`).join("")
+        : `<span class="library-doc-tag">${escapeHtml(state.library.untaggedLabel)}</span>`;
+
+      return `
+        <button type="button" class="library-doc-button${isActive}" data-open-library-doc="${escapeHtml(documentItem.filePath)}">
+          <span class="library-doc-title">${escapeHtml(documentItem.title)}</span>
+          <span class="library-doc-tags">${tagMarkup}</span>
+          <span class="library-doc-meta">${escapeHtml(documentItem.relativePath)}</span>
+          <span class="library-doc-meta">更新于 ${escapeHtml(formatLibraryTimestamp(documentItem.updatedAt))}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
 function toDisplayName(filePath) {
   return filePath.split(/[\\/]/u).pop() || filePath;
 }
@@ -121,21 +885,79 @@ function normalizeDocumentTitle(value) {
   return normalized || "未命名文档";
 }
 
+function normalizeTagLabel(value) {
+  return normalizeCodeText(value || "").replace(/\s+/gu, " ").trim();
+}
+
+function normalizeTagList(tags) {
+  const values = Array.isArray(tags)
+    ? tags
+    : typeof tags === "string"
+      ? tags.split(/[,，\n]/u)
+      : [];
+  const seen = new Set();
+  const normalized = [];
+
+  values.forEach((value) => {
+    const nextTag = normalizeTagLabel(value);
+
+    if (!nextTag) {
+      return;
+    }
+
+    const key = nextTag.toLocaleLowerCase();
+
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    normalized.push(nextTag);
+  });
+
+  return normalized;
+}
+
+function formatLibraryTimestamp(value) {
+  if (!value) {
+    return "未保存时间";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "未保存时间";
+  }
+
+  return new Intl.DateTimeFormat("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 function updateDocumentTitlePreview(title) {
   refs.docName.textContent = title;
   document.title = `${title} - FlowDoc`;
 }
 
-function updateDocumentMeta(filePath, title = getDocumentTitleFromPath(filePath)) {
+function updateDocumentMeta(filePath, title = getDocumentTitleFromPath(filePath), tags = state.currentDocument?.tags || []) {
+  const normalizedTags = normalizeTagList(tags);
+
   if (!state.currentDocument) {
-    state.currentDocument = { filePath, title };
+    state.currentDocument = { filePath, title, tags: normalizedTags };
   } else {
     state.currentDocument.filePath = filePath;
     state.currentDocument.title = title;
+    state.currentDocument.tags = normalizedTags;
   }
 
   updateDocumentTitlePreview(title);
   refs.docPath.textContent = filePath;
+  renderCurrentDocumentTags();
+  renderLibraryView();
 }
 
 function normalizeCodeText(text) {
@@ -168,11 +990,7 @@ function getSelectionRange() {
 }
 
 function isSpecialBlock(node) {
-  return Boolean(
-    node &&
-      node.nodeType === Node.ELEMENT_NODE &&
-      node.matches(".image-node, .attachment-node, .code-block-node"),
-  );
+  return Boolean(node && node.nodeType === Node.ELEMENT_NODE && node.matches(SPECIAL_BLOCK_SELECTOR));
 }
 
 function isGapParagraph(node) {
@@ -553,6 +1371,7 @@ async function refreshDocumentPathFromDisk() {
   ensureDocumentTitleHeading(result.title);
   saveSelection();
   scheduleUiRefresh();
+  await loadDocumentLibrary();
   return true;
 }
 
@@ -573,6 +1392,7 @@ async function syncDocumentTitleNow() {
   });
 
   updateDocumentMeta(renameResult.filePath, renameResult.title);
+  await loadDocumentLibrary();
 
   if (renameResult.title !== desiredTitle) {
     setNodeTextPreservingCaret(titleNode, renameResult.title);
@@ -689,6 +1509,7 @@ function buildImageMarkup(file) {
 function buildAttachmentMarkup(file) {
   const safeName = escapeHtml(file.name);
   const safePath = escapeHtml(file.relativePath);
+  const previewKind = getAttachmentPreviewKind(file.name || file.relativePath);
 
   return `
     <div class="resource-card attachment-node" data-kind="attachment" data-src="${safePath}" data-name="${safeName}" data-node-id="${generateNodeId("attachment")}" contenteditable="false">
@@ -698,12 +1519,163 @@ function buildAttachmentMarkup(file) {
           <strong>${safeName}</strong>
           <span>${safePath}</span>
         </div>
-        <button class="attachment-download" type="button" data-action="download-attachment">下载到 Downloads</button>
+        <div class="attachment-actions">
+          <button class="attachment-preview${previewKind ? "" : " hidden"}" type="button" data-action="preview-attachment">预览</button>
+          <button class="attachment-download" type="button" data-action="download-attachment">下载到 Downloads</button>
+        </div>
       </div>
       <div class="resource-placeholder" hidden></div>
     </div>
     ${buildGapMarkup()}
   `;
+}
+
+function normalizeYoutubeEmbedUrl(url) {
+  const host = url.hostname.replace(/^www\./iu, "").toLowerCase();
+  let videoId = "";
+
+  if (host === "youtu.be") {
+    videoId = url.pathname.slice(1).split("/")[0] || "";
+  } else if (url.pathname.startsWith("/watch")) {
+    videoId = url.searchParams.get("v") || "";
+  } else {
+    const match = url.pathname.match(/^\/(?:embed|shorts|live)\/([^/?#]+)/iu);
+    videoId = match?.[1] || "";
+  }
+
+  if (!videoId) {
+    return null;
+  }
+
+  const embedUrl = new URL(`https://www.youtube.com/embed/${videoId}`);
+  const start = (url.searchParams.get("start") || url.searchParams.get("t") || "").replace(/[^\d]/gu, "");
+  const list = url.searchParams.get("list") || "";
+
+  if (start) {
+    embedUrl.searchParams.set("start", start);
+  }
+
+  if (list) {
+    embedUrl.searchParams.set("list", list);
+  }
+
+  return {
+    provider: "YouTube",
+    src: embedUrl.toString(),
+    sourceUrl: `https://www.youtube.com/watch?v=${videoId}`,
+  };
+}
+
+function normalizeBilibiliEmbedUrl(url) {
+  const host = url.hostname.replace(/^www\./iu, "").toLowerCase();
+
+  if (host === "player.bilibili.com" && url.pathname.startsWith("/player.html")) {
+    return {
+      provider: "Bilibili",
+      src: url.toString(),
+      sourceUrl: url.toString(),
+    };
+  }
+
+  const match = url.pathname.match(/^\/video\/((?:BV[\da-z]+)|(?:av\d+))/iu);
+
+  if (!match) {
+    return null;
+  }
+
+  const identifier = match[1];
+  const embedUrl = new URL("https://player.bilibili.com/player.html");
+  const page = url.searchParams.get("p") || "1";
+
+  if (/^BV/iu.test(identifier)) {
+    embedUrl.searchParams.set("bvid", identifier);
+  } else {
+    embedUrl.searchParams.set("aid", identifier.replace(/^av/iu, ""));
+  }
+
+  embedUrl.searchParams.set("page", page);
+
+  return {
+    provider: "Bilibili",
+    src: embedUrl.toString(),
+    sourceUrl: url.toString(),
+  };
+}
+
+function normalizeVideoEmbedUrl(value) {
+  const rawValue = normalizeCodeText(value || "").trim();
+
+  if (!rawValue) {
+    return null;
+  }
+
+  const candidate = rawValue.startsWith("//") ? `https:${rawValue}` : rawValue;
+
+  try {
+    const url = new URL(candidate);
+    const host = url.hostname.replace(/^www\./iu, "").toLowerCase();
+
+    if (["youtube.com", "m.youtube.com", "youtube-nocookie.com", "youtu.be"].includes(host)) {
+      return normalizeYoutubeEmbedUrl(url);
+    }
+
+    if (["bilibili.com", "m.bilibili.com", "player.bilibili.com"].includes(host)) {
+      return normalizeBilibiliEmbedUrl(url);
+    }
+  } catch (_error) {
+    return null;
+  }
+
+  return null;
+}
+
+function configureVideoIframe(iframe, embed) {
+  if (!iframe || !embed) {
+    return;
+  }
+
+  iframe.setAttribute("src", embed.src);
+  iframe.setAttribute("title", `${embed.provider} 视频`);
+  iframe.setAttribute("loading", "lazy");
+  iframe.setAttribute("allowfullscreen", "true");
+  iframe.setAttribute("referrerpolicy", "strict-origin-when-cross-origin");
+  iframe.setAttribute("allow", VIDEO_IFRAME_ALLOW);
+}
+
+function buildLinkMarkup(link) {
+  const href = normalizeExternalUrl(link?.href);
+
+  if (!href) {
+    return "";
+  }
+
+  const label = normalizeCodeText(link.label || href).trim() || href;
+  const safeHref = escapeHtml(href);
+
+  return `<a class="editor-link" href="${safeHref}" data-href="${safeHref}" target="_blank" rel="noopener noreferrer" title="${escapeHtml(LINK_OPEN_HINT)}">${escapeHtml(label)}</a>`;
+}
+
+function buildVideoEmbedMarkup(embed) {
+  const nodeId = generateNodeId("video");
+  const safeProvider = escapeHtml(embed.provider);
+  const safeSrc = escapeHtml(embed.src);
+  const safeSourceUrl = escapeHtml(embed.sourceUrl || embed.src);
+
+  return {
+    nodeId,
+    html: `
+      <div class="resource-card video-embed-node" data-kind="video-embed" data-provider="${safeProvider}" data-src="${safeSrc}" data-source-url="${safeSourceUrl}" data-node-id="${nodeId}" contenteditable="false">
+        <div class="video-embed-head">
+          <span>${safeProvider} 视频</span>
+        </div>
+        <div class="video-embed-frame">
+          <iframe src="${safeSrc}" title="${safeProvider} 视频" loading="lazy" allowfullscreen referrerpolicy="strict-origin-when-cross-origin" allow="${escapeHtml(VIDEO_IFRAME_ALLOW)}"></iframe>
+        </div>
+        <div class="resource-placeholder" hidden></div>
+      </div>
+      ${buildGapMarkup()}
+    `,
+  };
 }
 
 function buildCodeBlockMarkup(codeText = "", language = "auto") {
@@ -756,6 +1728,60 @@ function focusCodeBlockById(nodeId) {
   codeEditor.focus();
   setSelectionTextOffset(codeEditor, getEditablePlainText(codeEditor).length);
   saveSelection();
+}
+
+function extractLinkFromClipboard(html, plainText) {
+  const directUrl = normalizeExternalUrl(plainText);
+
+  if (!html) {
+    return directUrl ? { href: directUrl, label: directUrl } : null;
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = html.trim();
+
+  if (template.content.querySelector("iframe, embed, img")) {
+    return null;
+  }
+
+  const anchors = [...template.content.querySelectorAll("a[href]")];
+
+  if (anchors.length !== 1) {
+    return directUrl ? { href: directUrl, label: directUrl } : null;
+  }
+
+  const anchor = anchors[0];
+  const href = normalizeExternalUrl(anchor.getAttribute("href") || directUrl);
+
+  if (!href) {
+    return null;
+  }
+
+  const label = normalizeCodeText(anchor.textContent || plainText || href).trim() || href;
+  return { href, label };
+}
+
+function extractVideoEmbedsFromMarkup(markup) {
+  if (!markup) {
+    return [];
+  }
+
+  const template = document.createElement("template");
+  template.innerHTML = markup.trim();
+
+  return [...template.content.querySelectorAll("iframe[src], embed[src]")]
+    .map((node) => normalizeVideoEmbedUrl(node.getAttribute("src")))
+    .filter(Boolean);
+}
+
+function getClipboardVideoEmbeds(html, plainText) {
+  const markup = html || (/<iframe[\s>]/iu.test(plainText) ? plainText : "");
+
+  if (!markup) {
+    return [];
+  }
+
+  return extractVideoEmbedsFromMarkup(markup);
 }
 
 function createGapElement() {
@@ -834,6 +1860,20 @@ function promoteGapParagraphIfNeeded(node) {
   }
 }
 
+function getVideoMigrationTarget(node) {
+  const topLevel = getTopLevelNode(node);
+
+  if (!topLevel || topLevel === refs.editor) {
+    return node;
+  }
+
+  if (topLevel.querySelectorAll("iframe, embed").length === 1 && isEmptyText(topLevel.textContent || "")) {
+    return topLevel;
+  }
+
+  return node;
+}
+
 function migrateLegacyCodeBlocks() {
   const legacyBlocks = [...refs.editor.querySelectorAll("pre")].filter(
     (node) => !node.closest(".code-block-node"),
@@ -845,6 +1885,60 @@ function migrateLegacyCodeBlocks() {
     fragment.innerHTML = buildCodeBlockMarkup(legacyCode).html.trim();
     node.replaceWith(...fragment.content.childNodes);
   });
+}
+
+function migrateLegacyVideoEmbeds() {
+  const legacyEmbeds = [...refs.editor.querySelectorAll("iframe[src], embed[src]")].filter(
+    (node) => !node.closest(".video-embed-node"),
+  );
+
+  legacyEmbeds.forEach((node) => {
+    const embed = normalizeVideoEmbedUrl(node.getAttribute("src"));
+
+    if (!embed) {
+      return;
+    }
+
+    const replacementTarget = getVideoMigrationTarget(node);
+    const fragment = document.createElement("template");
+    fragment.innerHTML = buildVideoEmbedMarkup(embed).html.trim();
+    replacementTarget.replaceWith(...fragment.content.childNodes);
+  });
+}
+
+function normalizeVideoEmbedBlock(block) {
+  const iframe = block.querySelector("iframe");
+  const placeholder = block.querySelector(".resource-placeholder");
+  const embed = normalizeVideoEmbedUrl(block.dataset.src || iframe?.getAttribute("src"));
+
+  if (!embed) {
+    block.classList.add("missing");
+
+    if (iframe) {
+      iframe.remove();
+    }
+
+    if (placeholder) {
+      placeholder.hidden = false;
+      placeholder.textContent = "暂不支持该视频嵌入来源";
+    }
+
+    return;
+  }
+
+  block.classList.remove("missing");
+  block.dataset.provider = embed.provider;
+  block.dataset.src = embed.src;
+  block.dataset.sourceUrl = embed.sourceUrl || embed.src;
+
+  if (iframe) {
+    configureVideoIframe(iframe, embed);
+  }
+
+  if (placeholder) {
+    placeholder.hidden = true;
+    placeholder.textContent = "";
+  }
 }
 
 function normalizeSpecialBlockLayout() {
@@ -991,22 +2085,38 @@ async function copyCodeBlock(button) {
 
   const codeText = getEditablePlainText(codeEditor);
 
-  if (!codeText) {
+  await copyAnyCodeText(button, codeText);
+}
+
+async function copyAnyCodeText(button, codeText) {
+  const normalizedCode = normalizeCodeText(codeText);
+
+  if (!normalizedCode) {
     setCopyButtonFeedback(button, "Empty", "idle");
     showToast("Code block is empty", "error", 1800);
     return;
   }
 
   if (typeof api.copyText === "function") {
-    api.copyText(codeText);
+    api.copyText(normalizedCode);
   } else if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(codeText);
+    await navigator.clipboard.writeText(normalizedCode);
   } else {
     throw new Error("Clipboard write is not supported in this environment.");
   }
 
   setCopyButtonFeedback(button, "Copied", "success");
   showToast("Code copied to clipboard", "success", 1800);
+}
+
+async function copyPreviewCode(button) {
+  const codeElement = button?.closest(".preview-markdown-code-wrap")?.querySelector(".preview-markdown-code code");
+
+  if (!codeElement) {
+    return;
+  }
+
+  await copyAnyCodeText(button, codeElement.textContent || "");
 }
 
 function syncCodeBlockEditor(codeEditor, { history = "schedule" } = {}) {
@@ -1044,10 +2154,16 @@ async function finalizeEmbeddedResourceInsertion() {
 
 function normalizeEditor() {
   migrateLegacyCodeBlocks();
+  migrateLegacyVideoEmbeds();
+  normalizeInlineLinks();
   normalizeSpecialBlockLayout();
 
-  refs.editor.querySelectorAll(".image-node, .attachment-node, .code-block-node").forEach((node) => {
+  refs.editor.querySelectorAll(SPECIAL_BLOCK_SELECTOR).forEach((node) => {
     node.setAttribute("contenteditable", "false");
+  });
+
+  refs.editor.querySelectorAll(".video-embed-node").forEach((block) => {
+    normalizeVideoEmbedBlock(block);
   });
 
   refs.editor.querySelectorAll(".code-block-node").forEach((block) => {
@@ -1100,6 +2216,8 @@ function selectSpecialBlock(block) {
 function serializeDocument() {
   const clone = refs.editor.cloneNode(true);
 
+  normalizeInlineLinks(clone);
+
   clone.querySelectorAll(".is-selected-block").forEach((node) => {
     node.classList.remove("is-selected-block");
   });
@@ -1127,6 +2245,10 @@ function serializeDocument() {
 
   clone.querySelectorAll(".code-block-node .code-block-editor").forEach((codeElement) => {
     codeElement.textContent = getEditablePlainText(codeElement);
+  });
+
+  clone.querySelectorAll(".video-embed-node").forEach((block) => {
+    normalizeVideoEmbedBlock(block);
   });
 
   return clone.innerHTML;
@@ -1315,18 +2437,22 @@ async function saveDocument(reason = "自动保存完成", tone = "success", opt
   await refreshDocumentPathFromDisk();
   await flushDocumentTitleSync();
   const html = serializeDocument();
+  const tags = normalizeTagList(state.currentDocument.tags);
   const forceSave = options.force === true;
+  const tagsChanged = JSON.stringify(tags) !== JSON.stringify(state.lastSavedTags);
 
-  if (!forceSave && html === state.lastSavedHtml) {
+  if (!forceSave && html === state.lastSavedHtml && !tagsChanged) {
     return false;
   }
 
   await api.saveDocument({
     filePath: state.currentDocument.filePath,
     html,
+    tags,
   });
 
   state.lastSavedHtml = html;
+  state.lastSavedTags = tags;
   setStatus(reason, tone);
 
   if (options.toast) {
@@ -1384,10 +2510,17 @@ async function refreshImageNode(node) {
 async function refreshAttachmentNode(node) {
   const relativePath = node.dataset.src;
   const placeholder = node.querySelector(".resource-placeholder");
-  const buttons = node.querySelectorAll("[data-action='download-attachment']");
+  const buttons = node.querySelectorAll("[data-action='download-attachment'], [data-action='preview-attachment']");
+  const previewButton = node.querySelector("[data-action='preview-attachment']");
+  const previewKind = getAttachmentPreviewKind(node.dataset.name || relativePath);
 
   if (!relativePath || !state.currentDocument) {
     return;
+  }
+
+  if (previewButton) {
+    previewButton.classList.toggle("hidden", !previewKind);
+    previewButton.disabled = !previewKind;
   }
 
   const resolved = await api.resolveResource({
@@ -1401,6 +2534,9 @@ async function refreshAttachmentNode(node) {
     buttons.forEach((button) => {
       button.disabled = false;
     });
+    if (previewButton && !previewKind) {
+      previewButton.disabled = true;
+    }
     return;
   }
 
@@ -1422,6 +2558,65 @@ async function refreshEmbeddedResources() {
   ]);
 }
 
+async function loadDocumentLibrary() {
+  const result = await api.loadDocumentLibrary();
+  state.library.rootPath = result.rootPath || "";
+  state.library.documents = Array.isArray(result.documents)
+    ? result.documents.map((documentItem) => ({
+        ...documentItem,
+        tags: normalizeTagList(documentItem.tags),
+      }))
+    : [];
+  state.library.untaggedLabel = result.untaggedLabel || "未分类";
+
+  const availableTags = new Set(
+    buildLibraryTagSummary(state.library.documents).map((item) => item.tag),
+  );
+
+  if (state.library.selectedTag && !availableTags.has(state.library.selectedTag)) {
+    state.library.selectedTag = "";
+  }
+
+  renderLibraryView();
+}
+
+async function openLibraryDocument(filePath) {
+  const documentPayload = await api.openDocumentAtPath(filePath);
+  await mountDocument(documentPayload, "文档已打开");
+}
+
+async function persistCurrentDocumentTags() {
+  if (!state.currentDocument) {
+    return false;
+  }
+
+  state.currentDocument.tags = normalizeTagList(state.currentDocument.tags);
+  renderCurrentDocumentTags();
+  await saveDocument("标签已更新", "success", { force: true, toast: true });
+  await loadDocumentLibrary();
+  return true;
+}
+
+function addTagsFromInput() {
+  if (!state.currentDocument) {
+    return false;
+  }
+
+  const incoming = normalizeTagList(refs.tagInput.value);
+
+  if (!incoming.length) {
+    return false;
+  }
+
+  state.currentDocument.tags = normalizeTagList([...(state.currentDocument.tags || []), ...incoming]);
+  refs.tagInput.value = "";
+  renderCurrentDocumentTags();
+  persistCurrentDocumentTags().catch((error) => {
+    reportError("更新标签失败", error);
+  });
+  return true;
+}
+
 function resetDocumentUi() {
   window.clearTimeout(state.saveTimer);
   window.clearTimeout(state.historyTimer);
@@ -1429,6 +2624,7 @@ function resetDocumentUi() {
   window.cancelAnimationFrame(state.uiFrame);
   state.titleSyncPromise = null;
   state.savedSelection = null;
+  closeAttachmentPreview();
   clearSpecialSelection();
   hideSelectionBubble();
   hideBlockHandle();
@@ -1437,8 +2633,9 @@ function resetDocumentUi() {
 async function mountDocument(documentPayload, successMessage) {
   const loadedHtml = documentPayload.html || "<h1>未命名文档</h1><p><br></p>";
   const documentTitle = documentPayload.title || getDocumentTitleFromPath(documentPayload.filePath);
+  const documentTags = normalizeTagList(documentPayload.tags);
 
-  updateDocumentMeta(documentPayload.filePath, documentTitle);
+  updateDocumentMeta(documentPayload.filePath, documentTitle, documentTags);
   refs.emptyState.classList.add("hidden");
   refs.editorSurface.classList.remove("hidden");
   refs.editor.innerHTML = loadedHtml;
@@ -1451,6 +2648,7 @@ async function mountDocument(documentPayload, successMessage) {
   const serializedHtml = serializeDocument();
   const normalizedDocumentChanged = serializedHtml !== loadedHtml;
   state.lastSavedHtml = normalizedDocumentChanged ? loadedHtml : serializedHtml;
+  state.lastSavedTags = documentTags;
   initializeHistoryState(serializedHtml);
   updateAvailability();
   setStatus(successMessage, "success");
@@ -1463,6 +2661,10 @@ async function mountDocument(documentPayload, successMessage) {
   if (normalizedDocumentChanged) {
     scheduleAutosave();
   }
+
+  loadDocumentLibrary().catch((error) => {
+    reportError("刷新文档库失败", error);
+  });
 }
 
 function getActiveBlock(range = getSelectionRange()) {
@@ -1763,8 +2965,8 @@ function positionBlockHandle(range) {
     return;
   }
 
-  refs.blockHandle.style.left = `${Math.max(12, Math.round(rect.left - BLOCK_HANDLE_WIDTH - BLOCK_HANDLE_GAP))}px`;
-  refs.blockHandle.style.top = `${Math.max(12, Math.round(rect.top + rect.height / 2 - BLOCK_HANDLE_HEIGHT / 2))}px`;
+  refs.blockHandle.style.left = `${Math.max(12, Math.round(rect.left + rect.width / 2 - BLOCK_HANDLE_WIDTH / 2))}px`;
+  refs.blockHandle.style.top = `${Math.max(12, Math.round(rect.top - BLOCK_HANDLE_HEIGHT - 8))}px`;
   refs.blockHandle.classList.remove("hidden");
 }
 
@@ -1835,6 +3037,41 @@ function insertCodeBlock(codeText = "") {
   queueEditorMutation({ history: "capture" });
 }
 
+function insertLinkMarkup(link) {
+  const html = buildLinkMarkup(link);
+
+  if (!html) {
+    return false;
+  }
+
+  clearSpecialSelection();
+  collapseTransientGaps();
+  restoreSelection();
+  insertHtmlAtSelection(html);
+  normalizeInlineLinks();
+  saveSelection();
+  queueEditorMutation({ history: "capture" });
+  return true;
+}
+
+async function insertVideoEmbeds(embeds) {
+  if (!embeds.length) {
+    return;
+  }
+
+  clearSpecialSelection();
+  collapseTransientGaps();
+  restoreSelection();
+
+  embeds.forEach((embed) => {
+    insertHtmlAtSelection(buildVideoEmbedMarkup(embed).html);
+  });
+
+  normalizeEditor();
+  saveSelection();
+  queueEditorMutation({ history: "capture" });
+}
+
 async function insertImageFiles(files) {
   if (!insertResourceFiles(files, buildImageMarkup)) {
     return;
@@ -1873,6 +3110,55 @@ async function handleOpenDocument() {
   }
 
   await mountDocument(result.document, "文档已打开");
+}
+
+async function openAnchorLink(anchor) {
+  const href = normalizeExternalUrl(anchor?.dataset.href || anchor?.getAttribute("href"));
+
+  if (!href) {
+    return false;
+  }
+
+  await api.openExternal(href);
+  return true;
+}
+
+function editAnchorLink(anchor) {
+  if (!anchor) {
+    return false;
+  }
+
+  const currentHref = normalizeExternalUrl(anchor.dataset.href || anchor.getAttribute("href"));
+  const nextValue = window.prompt("编辑链接地址", currentHref);
+
+  if (nextValue === null) {
+    return false;
+  }
+
+  const nextHref = normalizeExternalUrl(nextValue);
+
+  if (!nextHref) {
+    unwrapElementPreservingChildren(anchor);
+    saveSelection();
+    queueEditorMutation({ history: "capture" });
+    showToast("链接已移除", "success", 1600);
+    return true;
+  }
+
+  anchor.setAttribute("href", nextHref);
+  anchor.dataset.href = nextHref;
+  anchor.setAttribute("target", "_blank");
+  anchor.setAttribute("rel", "noopener noreferrer");
+  anchor.setAttribute("title", LINK_OPEN_HINT);
+
+  if (!normalizeCodeText(anchor.textContent).trim()) {
+    anchor.textContent = nextHref;
+  }
+
+  saveSelection();
+  queueEditorMutation({ history: "capture" });
+  showToast("链接已更新", "success", 1600);
+  return true;
 }
 
 function prepareInsertionPointFromCaret() {
@@ -1987,30 +3273,58 @@ async function handlePaste(event) {
 
   const items = [...event.clipboardData.items];
   const imageItem = items.find((item) => item.type.startsWith("image/"));
+  const plainText = event.clipboardData.getData("text/plain");
+  const html = event.clipboardData.getData("text/html");
 
-  if (!imageItem) {
+  if (imageItem) {
+    event.preventDefault();
+    saveSelection();
+
+    const imageFile = imageItem.getAsFile();
+
+    if (!imageFile) {
+      return;
+    }
+
+    const dataUrl = await blobToDataUrl(imageFile);
+    const suggestedName = imageFile.name || `pasted-image-${Date.now()}.png`;
+    const saved = await api.savePastedImage({
+      docPath: state.currentDocument.filePath,
+      dataUrl,
+      suggestedName,
+    });
+
+    await insertImageFiles([saved]);
+    showToast("剪贴板图片已插入");
     return;
   }
 
-  event.preventDefault();
-  saveSelection();
+  const videoEmbeds = getClipboardVideoEmbeds(html, plainText);
 
-  const imageFile = imageItem.getAsFile();
-
-  if (!imageFile) {
+  if (videoEmbeds.length) {
+    event.preventDefault();
+    saveSelection();
+    await insertVideoEmbeds(videoEmbeds);
+    showToast(`已嵌入 ${videoEmbeds.length} 个视频`, "success", 1800);
     return;
   }
 
-  const dataUrl = await blobToDataUrl(imageFile);
-  const suggestedName = imageFile.name || `pasted-image-${Date.now()}.png`;
-  const saved = await api.savePastedImage({
-    docPath: state.currentDocument.filePath,
-    dataUrl,
-    suggestedName,
-  });
+  if (html.includes("<iframe") || plainText.includes("<iframe")) {
+    event.preventDefault();
+    showToast("暂不支持该视频嵌入来源", "error", 1800);
+    return;
+  }
 
-  await insertImageFiles([saved]);
-  showToast("剪贴板图片已插入");
+  const link = extractLinkFromClipboard(html, plainText);
+
+  if (link) {
+    event.preventDefault();
+    saveSelection();
+
+    if (insertLinkMarkup(link)) {
+      showToast("链接已插入", "success", 1600);
+    }
+  }
 }
 
 async function handleAttachmentDownload(button) {
@@ -2026,6 +3340,31 @@ async function handleAttachmentDownload(button) {
   });
 
   showToast(`附件已复制到 ${result.savedPath}`, "success", 2600);
+}
+
+async function handleAttachmentPreview(button) {
+  const node = button.closest(".attachment-node");
+
+  if (!node || !state.currentDocument || node.classList.contains("missing")) {
+    return;
+  }
+
+  const result = await api.previewAttachment({
+    docPath: state.currentDocument.filePath,
+    relativePath: node.dataset.src,
+  });
+
+  if (!result.exists) {
+    showToast(`附件资源缺失：${node.dataset.src}`, "error", 2200);
+    return;
+  }
+
+  if (!result.previewable) {
+    showToast("当前附件暂不支持预览", "error", 2200);
+    return;
+  }
+
+  openAttachmentPreview(result, node.dataset.src);
 }
 
 function reportError(prefix, error) {
@@ -2194,6 +3533,74 @@ refs.saveDocButton.addEventListener("click", () => {
   });
 });
 
+refs.addTagButton.addEventListener("click", () => {
+  addTagsFromInput();
+});
+
+refs.tagInput.addEventListener("keydown", (event) => {
+  if (event.key !== "Enter") {
+    return;
+  }
+
+  event.preventDefault();
+  addTagsFromInput();
+});
+
+refs.docTags.addEventListener("click", (event) => {
+  const removeTarget = event.target.closest("[data-remove-tag]");
+
+  if (!removeTarget || !state.currentDocument) {
+    return;
+  }
+
+  const tag = removeTarget.dataset.removeTag || "";
+  state.currentDocument.tags = normalizeTagList(
+    (state.currentDocument.tags || []).filter((item) => item !== tag),
+  );
+  renderCurrentDocumentTags();
+  persistCurrentDocumentTags().catch((error) => {
+    reportError("更新标签失败", error);
+  });
+});
+
+refs.librarySearchInput.addEventListener("input", (event) => {
+  state.library.searchText = event.target.value || "";
+  renderLibraryView();
+});
+
+refs.libraryTagFilters.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-library-tag]");
+
+  if (!button) {
+    return;
+  }
+
+  state.library.selectedTag = button.dataset.libraryTag || "";
+  renderLibraryView();
+});
+
+refs.libraryDocList.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-open-library-doc]");
+
+  if (!button) {
+    return;
+  }
+
+  openLibraryDocument(button.dataset.openLibraryDoc).catch((error) => {
+    reportError("从文档库打开失败", error);
+  });
+});
+
+refs.refreshLibraryButton.addEventListener("click", () => {
+  loadDocumentLibrary()
+    .then(() => {
+      showToast("文档库已刷新", "success", 1400);
+    })
+    .catch((error) => {
+      reportError("刷新文档库失败", error);
+    });
+});
+
 refs.selectionBubble.addEventListener("mousedown", (event) => {
   if (event.target.closest("button")) {
     event.preventDefault();
@@ -2284,7 +3691,14 @@ refs.insertMenu.addEventListener("click", (event) => {
 refs.editor.addEventListener("mousedown", (event) => {
   clearSelectAllScope();
 
-  const attachmentAction = event.target.closest("[data-action='download-attachment']");
+  if (event.target.closest("a.editor-link") && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    return;
+  }
+
+  const attachmentAction = event.target.closest(
+    "[data-action='download-attachment'], [data-action='preview-attachment']",
+  );
 
   if (attachmentAction) {
     return;
@@ -2308,7 +3722,7 @@ refs.editor.addEventListener("mousedown", (event) => {
     return;
   }
 
-  const specialBlock = event.target.closest(".image-node, .attachment-node, .code-block-node");
+  const specialBlock = event.target.closest(SPECIAL_BLOCK_SELECTOR);
 
   if (specialBlock) {
     event.preventDefault();
@@ -2381,6 +3795,25 @@ refs.editor.addEventListener("keydown", (event) => {
 });
 
 refs.editor.addEventListener("click", (event) => {
+  const anchor = event.target.closest("a.editor-link");
+
+  if (anchor && (event.ctrlKey || event.metaKey)) {
+    event.preventDefault();
+    openAnchorLink(anchor).catch((error) => {
+      reportError("打开链接失败", error);
+    });
+    return;
+  }
+
+  const previewButton = event.target.closest("[data-action='preview-attachment']");
+
+  if (previewButton) {
+    handleAttachmentPreview(previewButton).catch((error) => {
+      reportError("附件预览失败", error);
+    });
+    return;
+  }
+
   const downloadButton = event.target.closest("[data-action='download-attachment']");
 
   if (downloadButton) {
@@ -2400,6 +3833,17 @@ refs.editor.addEventListener("click", (event) => {
   }
 
   rememberSelectionIfNeeded();
+});
+
+refs.editor.addEventListener("dblclick", (event) => {
+  const anchor = event.target.closest("a.editor-link");
+
+  if (!anchor) {
+    return;
+  }
+
+  event.preventDefault();
+  editAnchorLink(anchor);
 });
 
 refs.editor.addEventListener("change", (event) => {
@@ -2431,6 +3875,40 @@ refs.editor.addEventListener("mouseup", rememberSelectionIfNeeded);
 refs.editor.addEventListener("keyup", rememberSelectionIfNeeded);
 document.addEventListener("selectionchange", rememberSelectionIfNeeded);
 
+refs.attachmentPreviewClose.addEventListener("click", () => {
+  closeAttachmentPreview();
+});
+
+refs.attachmentPreviewDownload.addEventListener("click", () => {
+  if (!state.currentDocument || !refs.attachmentPreviewDownload.dataset.relativePath) {
+    return;
+  }
+
+  api
+    .downloadAttachment({
+      docPath: state.currentDocument.filePath,
+      relativePath: refs.attachmentPreviewDownload.dataset.relativePath,
+    })
+    .then((result) => {
+      showToast(`附件已复制到 ${result.savedPath}`, "success", 2600);
+    })
+    .catch((error) => {
+      reportError("下载附件失败", error);
+    });
+});
+
+refs.attachmentPreviewModal.addEventListener("click", (event) => {
+  const copyButton = event.target.closest("[data-action='copy-preview-code']");
+
+  if (!copyButton) {
+    return;
+  }
+
+  copyPreviewCode(copyButton).catch((error) => {
+    reportError("Markdown 代码复制失败", error);
+  });
+});
+
 document.addEventListener("mousedown", (event) => {
   if (!event.target.closest("#blockHandle")) {
     hideInsertMenu();
@@ -2440,8 +3918,12 @@ document.addEventListener("mousedown", (event) => {
     collapseTransientGaps();
   }
 
-  if (!event.target.closest(".image-node, .attachment-node, .code-block-node")) {
+  if (!event.target.closest(SPECIAL_BLOCK_SELECTOR)) {
     clearSpecialSelection();
+  }
+
+  if (event.target.closest("[data-preview-close]")) {
+    closeAttachmentPreview();
   }
 });
 
@@ -2451,9 +3933,18 @@ window.addEventListener("focus", () => {
   refreshDocumentPathFromDisk().catch((error) => {
     reportError("文档路径同步失败", error);
   });
+
+  loadDocumentLibrary().catch((error) => {
+    reportError("刷新文档库失败", error);
+  });
 });
 
 document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && !refs.attachmentPreviewModal.classList.contains("hidden")) {
+    closeAttachmentPreview();
+    return;
+  }
+
   if (!state.currentDocument) {
     return;
   }
@@ -2496,3 +3987,8 @@ document.addEventListener("keydown", (event) => {
 });
 
 updateAvailability();
+renderCurrentDocumentTags();
+renderLibraryView();
+loadDocumentLibrary().catch((error) => {
+  reportError("加载文档库失败", error);
+});
