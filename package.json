@@ -20,6 +20,7 @@
     },
     "files": [
       "main.js",
+      "pdf-export-preload.js",
       "preload.js",
       "renderer.js",
       "index.html",

@@ -22,6 +22,27 @@ const BLOCK_HANDLE_WIDTH = 42;
 const BLOCK_HANDLE_HEIGHT = 42;
 const BLOCK_HANDLE_GAP = 10;
 const SPECIAL_BLOCK_SELECTOR = ".image-node, .attachment-node, .code-block-node, .video-embed-node";
+const EDITOR_SANITIZE_REMOVE_SELECTOR = [
+  "script",
+  "style",
+  "link",
+  "meta",
+  "base",
+  "object",
+  "applet",
+  "frame",
+  "frameset",
+  "audio",
+  "video",
+  "source",
+  "track",
+  "svg",
+  "math",
+  "canvas",
+  "form",
+  "input",
+  "textarea",
+].join(", ");
 const LINK_OPEN_HINT = "Ctrl/Cmd+点击打开，双击修改链接";
 const VIDEO_IFRAME_ALLOW =
   "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share";
@@ -151,6 +172,7 @@ const refs = {
   newDocButton: document.getElementById("newDocButton"),
   openDocButton: document.getElementById("openDocButton"),
   saveDocButton: document.getElementById("saveDocButton"),
+  exportPdfButton: document.getElementById("exportPdfButton"),
   docTags: document.getElementById("docTags"),
   tagInput: document.getElementById("tagInput"),
   addTagButton: document.getElementById("addTagButton"),
@@ -459,6 +481,7 @@ function openAttachmentPreview(preview, relativePath) {
 function updateAvailability() {
   const enabled = Boolean(state.currentDocument);
   refs.saveDocButton.disabled = !enabled;
+  refs.exportPdfButton.disabled = !enabled;
   refs.editor.contentEditable = enabled ? "true" : "false";
   refs.tagInput.disabled = !enabled;
   refs.addTagButton.disabled = !enabled;
@@ -872,6 +895,131 @@ function normalizeInlineLinks(root = refs.editor) {
   root.querySelectorAll("a").forEach((anchor) => {
     normalizeAnchorElement(anchor);
   });
+}
+
+function listSanitizableEditorElements(root) {
+  const descendants = root?.querySelectorAll ? [...root.querySelectorAll("*")] : [];
+  return root?.nodeType === Node.ELEMENT_NODE ? [root, ...descendants] : descendants;
+}
+
+function sanitizeEditorNodeTree(root) {
+  if (!root?.querySelectorAll) {
+    return root;
+  }
+
+  root.querySelectorAll(EDITOR_SANITIZE_REMOVE_SELECTOR).forEach((node) => {
+    node.remove();
+  });
+
+  listSanitizableEditorElements(root).forEach((element) => {
+    if (!element.parentNode && element !== root) {
+      return;
+    }
+
+    const tagName = (element.tagName || "").toLowerCase();
+
+    if (tagName === "img") {
+      if (!element.closest(".image-node")) {
+        element.remove();
+        return;
+      }
+
+      element.removeAttribute("src");
+      element.removeAttribute("srcset");
+      element.removeAttribute("sizes");
+    }
+
+    if (tagName === "iframe" || tagName === "embed") {
+      const embed = normalizeVideoEmbedUrl(element.getAttribute("src"));
+
+      if (!embed) {
+        element.remove();
+        return;
+      }
+
+      element.setAttribute("src", embed.src);
+      element.removeAttribute("srcdoc");
+    }
+
+    if (tagName === "button" && !element.closest(".attachment-node, .code-block-node")) {
+      unwrapElementPreservingChildren(element);
+      return;
+    }
+
+    if (tagName === "select" && !element.closest(".code-block-node")) {
+      element.remove();
+      return;
+    }
+
+    if (tagName === "option" && !element.closest(".code-language-select")) {
+      element.remove();
+      return;
+    }
+
+    [...element.attributes].forEach((attribute) => {
+      const attributeName = attribute.name.toLowerCase();
+
+      if (
+        attributeName.startsWith("on") ||
+        ["style", "srcdoc", "ping", "nonce", "integrity", "contenteditable"].includes(attributeName)
+      ) {
+        element.removeAttribute(attribute.name);
+        return;
+      }
+
+      if (attributeName === "href") {
+        if (tagName === "a") {
+          const safeHref = normalizeExternalUrl(attribute.value);
+
+          if (safeHref) {
+            element.setAttribute("href", safeHref);
+          } else {
+            element.removeAttribute(attribute.name);
+          }
+        } else {
+          element.removeAttribute(attribute.name);
+        }
+
+        return;
+      }
+
+      if (attributeName === "src") {
+        if (tagName !== "iframe" && tagName !== "embed") {
+          element.removeAttribute(attribute.name);
+        }
+
+        return;
+      }
+
+      if (attributeName === "target") {
+        if (tagName === "a") {
+          element.setAttribute("target", "_blank");
+        } else {
+          element.removeAttribute(attribute.name);
+        }
+
+        return;
+      }
+
+      if (attributeName === "rel") {
+        if (tagName === "a") {
+          element.setAttribute("rel", "noopener noreferrer");
+        } else {
+          element.removeAttribute(attribute.name);
+        }
+      }
+    });
+  });
+
+  normalizeInlineLinks(root);
+  return root;
+}
+
+function sanitizeEditorMarkup(html) {
+  const template = document.createElement("template");
+  template.innerHTML = String(html || "");
+  sanitizeEditorNodeTree(template.content);
+  return template.innerHTML;
 }
 
 function buildLibraryTagSummary(documents = state.library.documents) {
@@ -2358,6 +2506,7 @@ function selectSpecialBlock(block) {
 
 function serializeDocument() {
   const clone = refs.editor.cloneNode(true);
+  sanitizeEditorNodeTree(clone);
 
   normalizeInlineLinks(clone);
 
@@ -2447,7 +2596,10 @@ function initializeHistoryState(currentHtml) {
         : [];
 
       if (persistedEntries.length > 0) {
-        entries = persistedEntries.slice(-HISTORY_LIMIT);
+        entries = persistedEntries.slice(-HISTORY_LIMIT).map((entry) => ({
+          ...entry,
+          html: sanitizeEditorMarkup(entry.html),
+        }));
       }
     }
   } catch (_error) {
@@ -2529,6 +2681,7 @@ async function restoreHistoryEntry(index) {
   state.history.isRestoring = true;
 
   const entry = state.history.entries[index];
+  entry.html = sanitizeEditorMarkup(entry.html || "<p><br></p>");
   refs.editor.innerHTML = entry.html || "<p><br></p>";
   normalizeEditor();
   const titleNode = ensureDocumentTitleHeading(getBlockText(getPrimaryTitleNode()) || state.currentDocument?.title);
@@ -2608,6 +2761,29 @@ async function saveDocument(reason = "自动保存完成", tone = "success", opt
   }
 
   return true;
+}
+
+async function exportCurrentDocumentAsPdf() {
+  if (!state.currentDocument) {
+    return;
+  }
+
+  setStatus("正在准备导出 PDF...");
+  await saveDocument("文档已保存", "success", { force: true });
+  const html = serializeDocument();
+  const result = await api.exportPdf({
+    filePath: state.currentDocument.filePath,
+    title: state.currentDocument.title,
+    html,
+  });
+
+  if (result.canceled) {
+    setStatus("已取消导出 PDF");
+    return;
+  }
+
+  setStatus("PDF 导出完成", "success");
+  showToast(`PDF 已导出到 ${result.savedPath}`, "success", 2200);
 }
 
 function scheduleAutosave() {
@@ -2780,7 +2956,8 @@ function resetDocumentUi() {
 }
 
 async function mountDocument(documentPayload, successMessage) {
-  const loadedHtml = documentPayload.html || "<h1>未命名文档</h1><p><br></p>";
+  const rawLoadedHtml = documentPayload.html || "<h1>未命名文档</h1><p><br></p>";
+  const loadedHtml = sanitizeEditorMarkup(rawLoadedHtml) || "<p><br></p>";
   const documentTitle = documentPayload.title || getDocumentTitleFromPath(documentPayload.filePath);
   const documentTags = normalizeTagList(documentPayload.tags);
 
@@ -2796,8 +2973,8 @@ async function mountDocument(documentPayload, successMessage) {
   await refreshEmbeddedResources();
 
   const serializedHtml = serializeDocument();
-  const normalizedDocumentChanged = serializedHtml !== loadedHtml;
-  state.lastSavedHtml = normalizedDocumentChanged ? loadedHtml : serializedHtml;
+  const normalizedDocumentChanged = serializedHtml !== rawLoadedHtml;
+  state.lastSavedHtml = normalizedDocumentChanged ? rawLoadedHtml : serializedHtml;
   state.lastSavedTags = documentTags;
   initializeHistoryState(serializedHtml);
   updateAvailability();
@@ -3511,6 +3688,25 @@ async function handlePaste(event) {
     if (insertLinkMarkup(link)) {
       showToast("链接已插入", "success", 1600);
     }
+    return;
+  }
+  if (html) {
+    event.preventDefault();
+    saveSelection();
+    const sanitizedHtml = sanitizeEditorMarkup(html);
+
+    if (sanitizedHtml.trim()) {
+      insertHtmlAtSelection(sanitizedHtml);
+      normalizeEditor();
+      queueEditorMutation({ history: "capture" });
+      return;
+    }
+
+    if (plainText) {
+      restoreSelection();
+      insertPlainTextAtCursor(plainText);
+      queueEditorMutation({ history: "capture" });
+    }
   }
 }
 
@@ -3756,6 +3952,12 @@ refs.openDocButton.addEventListener("click", () => {
 refs.saveDocButton.addEventListener("click", () => {
   saveDocument("文档已保存", "success", { force: true, toast: true }).catch((error) => {
     reportError("保存失败", error);
+  });
+});
+
+refs.exportPdfButton.addEventListener("click", () => {
+  exportCurrentDocumentAsPdf().catch((error) => {
+    reportError("导出 PDF 失败", error);
   });
 });
 
