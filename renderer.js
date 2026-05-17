@@ -166,6 +166,7 @@ const state = {
   },
   attachmentPreview: null,
   imageContextMenuPath: "",
+  isPointerSelecting: false,
 };
 
 const refs = {
@@ -1481,6 +1482,21 @@ function restoreSelection() {
   return range;
 }
 
+function beginPointerSelection() {
+  state.isPointerSelecting = true;
+  hideSelectionBubble();
+  hideBlockHandle();
+}
+
+function endPointerSelection() {
+  if (!state.isPointerSelecting) {
+    return;
+  }
+
+  state.isPointerSelecting = false;
+  scheduleUiRefresh();
+}
+
 function clearSelectAllScope() {
   state.selectAllScope = null;
 }
@@ -1735,6 +1751,43 @@ function placeCaretInside(target, { start = true } = {}) {
   selection.removeAllRanges();
   selection.addRange(range);
   state.savedSelection = createSelectionBookmark(range);
+}
+
+function placeCaretFromPoint(clientX, clientY, fallbackTarget, { start = false } = {}) {
+  if (!fallbackTarget) {
+    return null;
+  }
+
+  let range = null;
+
+  if (typeof document.caretPositionFromPoint === "function") {
+    const position = document.caretPositionFromPoint(clientX, clientY);
+
+    if (position?.offsetNode) {
+      range = document.createRange();
+      range.setStart(position.offsetNode, position.offset);
+      range.collapse(true);
+    }
+  } else if (typeof document.caretRangeFromPoint === "function") {
+    range = document.caretRangeFromPoint(clientX, clientY);
+
+    if (range) {
+      range.collapse(true);
+    }
+  }
+
+  if (!range || !fallbackTarget.contains(range.startContainer)) {
+    range = document.createRange();
+    range.selectNodeContents(fallbackTarget);
+    range.collapse(start);
+  }
+
+  const selection = getSelection();
+  fallbackTarget.focus?.();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  state.savedSelection = createSelectionBookmark(range);
+  return range;
 }
 
 function moveCaretAfterNode(node) {
@@ -3298,7 +3351,7 @@ function positionBlockHandle(range) {
 }
 
 function refreshFloatingControls() {
-  if (!state.currentDocument || getSelectedSpecialBlock()) {
+  if (!state.currentDocument || state.isPointerSelecting || getSelectedSpecialBlock()) {
     hideSelectionBubble();
     hideBlockHandle();
     return;
@@ -4154,13 +4207,34 @@ refs.editor.addEventListener("mousedown", (event) => {
     return;
   }
 
-  if (
-    event.target.closest("[data-action='copy-code']") ||
-    event.target.closest(".code-language-select") ||
-    event.target.closest(".code-block-editor")
-  ) {
+  if (event.target.closest("[data-action='copy-code']") || event.target.closest(".code-language-select")) {
     clearSpecialSelection();
     collapseTransientGaps();
+    return;
+  }
+
+  if (event.target.closest(".code-block-editor")) {
+    if (event.button === 0) {
+      beginPointerSelection();
+    }
+    clearSpecialSelection();
+    collapseTransientGaps();
+    return;
+  }
+
+  const codeBlockFrame = event.target.closest(".code-block-frame");
+
+  if (codeBlockFrame) {
+    const codeEditor = codeBlockFrame.querySelector(".code-block-editor");
+    clearSpecialSelection();
+    collapseTransientGaps();
+
+    if (codeEditor && event.button === 0) {
+      event.preventDefault();
+      beginPointerSelection();
+      placeCaretFromPoint(event.clientX, event.clientY, codeEditor);
+    }
+
     return;
   }
 
@@ -4182,6 +4256,10 @@ refs.editor.addEventListener("mousedown", (event) => {
 
   clearSpecialSelection();
   collapseTransientGaps();
+
+  if (event.button === 0) {
+    beginPointerSelection();
+  }
 });
 
 refs.editor.addEventListener("contextmenu", (event) => {
@@ -4334,7 +4412,10 @@ refs.editor.addEventListener("focusout", (event) => {
 });
 
 refs.editor.addEventListener("focusin", rememberSelectionIfNeeded);
-refs.editor.addEventListener("mouseup", rememberSelectionIfNeeded);
+refs.editor.addEventListener("mouseup", () => {
+  endPointerSelection();
+  rememberSelectionIfNeeded();
+});
 refs.editor.addEventListener("keyup", rememberSelectionIfNeeded);
 document.addEventListener("selectionchange", rememberSelectionIfNeeded);
 
@@ -4424,6 +4505,10 @@ document.addEventListener("mousedown", (event) => {
   if (event.target.closest("[data-preview-close]")) {
     closeAttachmentPreview();
   }
+});
+
+document.addEventListener("mouseup", () => {
+  endPointerSelection();
 });
 
 window.addEventListener("resize", () => {
