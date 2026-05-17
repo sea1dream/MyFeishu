@@ -1,5 +1,6 @@
 :root {
   color-scheme: light;
+  --sidebar-width: 320px;
   --bg-1: #e8d8c5;
   --bg-2: #f7f2eb;
   --ink: #2f2419;
@@ -53,7 +54,7 @@ pre {
 
 .app-shell {
   display: grid;
-  grid-template-columns: 320px minmax(0, 1fr);
+  grid-template-columns: clamp(280px, var(--sidebar-width), 520px) 14px minmax(0, 1fr);
   min-height: 100vh;
 }
 
@@ -68,6 +69,39 @@ pre {
     linear-gradient(180deg, rgba(63, 39, 22, 0.92), rgba(28, 18, 12, 0.96)),
     linear-gradient(180deg, rgba(255, 255, 255, 0.04), transparent);
   color: #f7f0e6;
+}
+
+.sidebar-resizer {
+  position: relative;
+  min-height: 100vh;
+  cursor: col-resize;
+  outline: none;
+  background: linear-gradient(180deg, rgba(72, 48, 31, 0.12), rgba(72, 48, 31, 0.04));
+}
+
+.sidebar-resizer::before {
+  content: "";
+  position: absolute;
+  inset: 18px 5px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(182, 90, 58, 0.18), rgba(72, 48, 31, 0.12));
+  transition:
+    background 140ms ease,
+    box-shadow 140ms ease,
+    transform 140ms ease;
+}
+
+.sidebar-resizer:hover::before,
+.sidebar-resizer:focus-visible::before,
+body.is-resizing-sidebar .sidebar-resizer::before {
+  background: linear-gradient(180deg, rgba(226, 161, 120, 0.72), rgba(182, 90, 58, 0.62));
+  box-shadow: 0 0 0 1px rgba(255, 244, 233, 0.24);
+  transform: scaleX(1.1);
+}
+
+body.is-resizing-sidebar {
+  cursor: col-resize;
+  user-select: none;
 }
 
 .brand-lockup {
@@ -285,7 +319,7 @@ pre {
 
 .outline-list {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   max-height: 280px;
   overflow: auto;
   padding-right: 4px;
@@ -297,19 +331,29 @@ pre {
 }
 
 .outline-button {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
   width: 100%;
-  padding: 8px 10px;
+  padding: 10px 12px;
   border: 1px solid rgba(255, 255, 255, 0.08);
-  border-radius: 12px;
+  border-radius: 14px;
   background: rgba(255, 249, 242, 0.06);
   color: #fff6ed;
   text-align: left;
   line-height: 1.45;
   box-shadow: none;
+  transition:
+    background 160ms ease,
+    border-color 160ms ease,
+    transform 160ms ease;
 }
 
 .outline-button:hover {
   background: rgba(255, 249, 242, 0.12);
+  border-color: rgba(255, 255, 255, 0.14);
+  transform: translateX(2px);
 }
 
 .outline-button.is-active {
@@ -318,12 +362,91 @@ pre {
   color: #fffaf4;
 }
 
+.outline-button-level {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 38px;
+  padding: 4px 8px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: rgba(255, 246, 237, 0.76);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.outline-button-main {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.outline-button-order {
+  color: rgba(247, 240, 230, 0.58);
+  font-size: 0.75rem;
+  letter-spacing: 0.05em;
+}
+
+.outline-button-text {
+  display: -webkit-box;
+  overflow: hidden;
+  color: inherit;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.outline-button[data-level="1"] {
+  background: linear-gradient(135deg, rgba(255, 249, 242, 0.12), rgba(255, 249, 242, 0.05));
+}
+
+.outline-button[data-level="1"] .outline-button-level {
+  background: rgba(255, 234, 214, 0.18);
+  color: #fff5ea;
+}
+
+.outline-button[data-level="1"] .outline-button-text {
+  font-size: 0.98rem;
+  font-weight: 700;
+  color: #fffaf4;
+}
+
 .outline-button[data-level="2"] {
-  padding-left: 22px;
+  margin-left: 14px;
+  background: rgba(255, 249, 242, 0.05);
+}
+
+.outline-button[data-level="2"] .outline-button-level {
+  background: rgba(255, 255, 255, 0.06);
+}
+
+.outline-button[data-level="2"] .outline-button-text {
+  font-weight: 600;
 }
 
 .outline-button[data-level="3"] {
-  padding-left: 34px;
+  margin-left: 28px;
+  background: rgba(255, 249, 242, 0.035);
+}
+
+.outline-button[data-level="3"] .outline-button-level {
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.outline-button[data-level="3"] .outline-button-text {
+  color: rgba(255, 246, 237, 0.82);
+  font-size: 0.88rem;
+}
+
+.outline-button.is-active .outline-button-level {
+  background: rgba(255, 255, 255, 0.18);
+  color: #fffaf4;
+}
+
+.outline-button.is-active .outline-button-order {
+  color: rgba(255, 250, 244, 0.78);
 }
 
 .library-card {
@@ -1261,6 +1384,10 @@ pre {
 
   .sidebar {
     gap: 16px;
+  }
+
+  .sidebar-resizer {
+    display: none;
   }
 
   .workspace {

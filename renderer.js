@@ -21,6 +21,10 @@ const CODE_COPY_FEEDBACK_DELAY = 1800;
 const BLOCK_HANDLE_WIDTH = 42;
 const BLOCK_HANDLE_HEIGHT = 42;
 const BLOCK_HANDLE_GAP = 10;
+const DEFAULT_SIDEBAR_WIDTH = 320;
+const MIN_SIDEBAR_WIDTH = 280;
+const MAX_SIDEBAR_WIDTH = 520;
+const SIDEBAR_WIDTH_STORAGE_KEY = "flowdoc-sidebar-width";
 const SPECIAL_BLOCK_SELECTOR = ".image-node, .attachment-node, .code-block-node, .video-embed-node";
 const EDITOR_SANITIZE_REMOVE_SELECTOR = [
   "script",
@@ -167,9 +171,14 @@ const state = {
   attachmentPreview: null,
   imageContextMenuPath: "",
   isPointerSelecting: false,
+  sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
+  sidebarResizeSession: null,
 };
 
 const refs = {
+  appShell: document.getElementById("appShell"),
+  sidebar: document.getElementById("sidebar"),
+  sidebarResizer: document.getElementById("sidebarResizer"),
   newDocButton: document.getElementById("newDocButton"),
   openDocButton: document.getElementById("openDocButton"),
   saveDocButton: document.getElementById("saveDocButton"),
@@ -219,6 +228,101 @@ function showToast(message, tone = "success", duration = 2600) {
   }, duration);
 }
 
+function isCompactLayout() {
+  return window.innerWidth <= 1120;
+}
+
+function getSidebarMaxWidth() {
+  return Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, window.innerWidth - 460));
+}
+
+function clampSidebarWidth(width) {
+  const numericWidth = Number(width);
+  const fallbackWidth = Number.isFinite(state.sidebarWidth) ? state.sidebarWidth : DEFAULT_SIDEBAR_WIDTH;
+  const resolvedWidth = Number.isFinite(numericWidth) ? numericWidth : fallbackWidth;
+  return Math.min(getSidebarMaxWidth(), Math.max(MIN_SIDEBAR_WIDTH, resolvedWidth));
+}
+
+function persistSidebarWidth(width) {
+  try {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(width)));
+  } catch (_error) {
+    // Ignore storage failures.
+  }
+}
+
+function applySidebarWidth(width, { persist = false } = {}) {
+  const nextWidth = clampSidebarWidth(width);
+  state.sidebarWidth = nextWidth;
+  document.documentElement.style.setProperty("--sidebar-width", `${nextWidth}px`);
+  scheduleUiRefresh();
+
+  if (refs.sidebarResizer) {
+    refs.sidebarResizer.setAttribute("aria-valuemin", String(MIN_SIDEBAR_WIDTH));
+    refs.sidebarResizer.setAttribute("aria-valuemax", String(getSidebarMaxWidth()));
+    refs.sidebarResizer.setAttribute("aria-valuenow", String(Math.round(nextWidth)));
+    refs.sidebarResizer.setAttribute("aria-valuetext", `侧边栏宽度 ${Math.round(nextWidth)} 像素`);
+  }
+
+  if (persist) {
+    persistSidebarWidth(nextWidth);
+  }
+}
+
+function restoreSidebarWidth() {
+  let initialWidth = DEFAULT_SIDEBAR_WIDTH;
+
+  try {
+    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    const parsed = Number.parseFloat(raw || "");
+
+    if (Number.isFinite(parsed)) {
+      initialWidth = parsed;
+    }
+  } catch (_error) {
+    // Ignore storage failures.
+  }
+
+  applySidebarWidth(initialWidth);
+}
+
+function beginSidebarResize(event) {
+  if (!refs.sidebar || isCompactLayout() || event.button !== 0) {
+    return;
+  }
+
+  event.preventDefault();
+  state.sidebarResizeSession = {
+    startX: event.clientX,
+    startWidth: refs.sidebar.getBoundingClientRect().width,
+  };
+  document.body.classList.add("is-resizing-sidebar");
+}
+
+function updateSidebarResize(event) {
+  if (!state.sidebarResizeSession) {
+    return;
+  }
+
+  const deltaX = event.clientX - state.sidebarResizeSession.startX;
+  applySidebarWidth(state.sidebarResizeSession.startWidth + deltaX);
+}
+
+function endSidebarResize() {
+  if (!state.sidebarResizeSession) {
+    return;
+  }
+
+  const finalWidth = state.sidebarWidth;
+  state.sidebarResizeSession = null;
+  document.body.classList.remove("is-resizing-sidebar");
+  applySidebarWidth(finalWidth, { persist: true });
+}
+
+function resetSidebarWidth() {
+  applySidebarWidth(DEFAULT_SIDEBAR_WIDTH, { persist: true });
+}
+
 function getDocumentOutlineHeadings() {
   return [...refs.editor.querySelectorAll("h1, h2, h3")];
 }
@@ -239,6 +343,33 @@ function getDocumentOutlineItems() {
     level: Number(heading.tagName.slice(1)) || 1,
     text: normalizeCodeText(getBlockText(heading)).replace(/\s+/gu, " ").trim() || "未命名标题",
   }));
+}
+
+function decorateDocumentOutlineItems(items) {
+  const counters = [0, 0, 0];
+
+  return items.map((item) => {
+    const level = Math.min(3, Math.max(1, Number(item.level) || 1));
+
+    counters[level - 1] += 1;
+
+    for (let index = level; index < counters.length; index += 1) {
+      counters[index] = 0;
+    }
+
+    for (let index = 0; index < level - 1; index += 1) {
+      if (!counters[index]) {
+        counters[index] = 1;
+      }
+    }
+
+    return {
+      ...item,
+      level,
+      levelLabel: `H${level}`,
+      orderLabel: counters.slice(0, level).join("."),
+    };
+  });
 }
 
 function findActiveOutlineHeadingId(range = getSelectionRange()) {
@@ -296,10 +427,16 @@ function renderDocumentOutline() {
   }
 
   refs.docOutline.className = "outline-list";
-  refs.docOutline.innerHTML = items
+  refs.docOutline.innerHTML = decorateDocumentOutlineItems(items)
     .map(
       (item) =>
-        `<button type="button" class="outline-button" data-outline-target="${escapeHtml(item.id)}" data-level="${item.level}">${escapeHtml(item.text)}</button>`,
+        `<button type="button" class="outline-button" data-outline-target="${escapeHtml(item.id)}" data-level="${item.level}">
+          <span class="outline-button-level">${escapeHtml(item.levelLabel)}</span>
+          <span class="outline-button-main">
+            <span class="outline-button-order">${escapeHtml(item.orderLabel)}</span>
+            <span class="outline-button-text">${escapeHtml(item.text)}</span>
+          </span>
+        </button>`,
     )
     .join("");
 
@@ -4054,6 +4191,41 @@ refs.docOutline.addEventListener("click", (event) => {
   jumpToOutlineHeading(button.dataset.outlineTarget || "");
 });
 
+refs.sidebarResizer.addEventListener("mousedown", (event) => {
+  beginSidebarResize(event);
+});
+
+refs.sidebarResizer.addEventListener("dblclick", () => {
+  resetSidebarWidth();
+});
+
+refs.sidebarResizer.addEventListener("keydown", (event) => {
+  if (isCompactLayout()) {
+    return;
+  }
+
+  if (event.key === "Home") {
+    event.preventDefault();
+    applySidebarWidth(MIN_SIDEBAR_WIDTH, { persist: true });
+    return;
+  }
+
+  if (event.key === "End") {
+    event.preventDefault();
+    applySidebarWidth(getSidebarMaxWidth(), { persist: true });
+    return;
+  }
+
+  if (!["ArrowLeft", "ArrowRight"].includes(event.key)) {
+    return;
+  }
+
+  event.preventDefault();
+  const step = event.shiftKey ? 36 : 18;
+  const direction = event.key === "ArrowRight" ? 1 : -1;
+  applySidebarWidth(state.sidebarWidth + direction * step, { persist: true });
+});
+
 refs.librarySearchInput.addEventListener("input", (event) => {
   state.library.searchText = event.target.value || "";
   renderLibraryView();
@@ -4508,10 +4680,17 @@ document.addEventListener("mousedown", (event) => {
 });
 
 document.addEventListener("mouseup", () => {
+  endSidebarResize();
   endPointerSelection();
 });
 
+document.addEventListener("mousemove", (event) => {
+  updateSidebarResize(event);
+});
+
 window.addEventListener("resize", () => {
+  applySidebarWidth(state.sidebarWidth);
+  endSidebarResize();
   hideImageContextMenu();
   scheduleUiRefresh();
 });
@@ -4532,6 +4711,10 @@ window.addEventListener("focus", () => {
   loadDocumentLibrary().catch((error) => {
     reportError("刷新文档库失败", error);
   });
+});
+
+window.addEventListener("blur", () => {
+  endSidebarResize();
 });
 
 document.addEventListener("keydown", (event) => {
@@ -4587,6 +4770,7 @@ document.addEventListener("keydown", (event) => {
 });
 
 updateAvailability();
+restoreSidebarWidth();
 renderCurrentDocumentTags();
 renderDocumentOutline();
 renderLibraryView();
