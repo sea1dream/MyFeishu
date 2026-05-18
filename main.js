@@ -33,57 +33,169 @@ const HIGHLIGHT_THEME_PATH = path.join(
 );
 const PDF_EXPORT_PRELOAD_PATH = path.join(__dirname, "pdf-export-preload.js");
 const LOCAL_FONTS_ROOT = path.join(__dirname, "assets", "fonts");
+const UI_SANS_FALLBACK = '"Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif';
+const UI_SERIF_FALLBACK = '"Georgia", "Songti SC", "STSong", serif';
+const CODE_FALLBACK = '"Cascadia Code", "Consolas", monospace';
+const staticFontFace = (family, directory, fileName, fontWeight) => ({ family, directory, fileName, fontWeight });
+const variableFontFace = (family, directory, fileName, fontWeight = "100 900") => ({
+  family,
+  directory,
+  fileName,
+  fontWeight,
+});
 const LOCAL_FONT_FACES = [
-  { family: "Google Sans Code", directory: "google-sans-code", fileName: "GoogleSansCode-Regular.ttf", fontWeight: 400 },
-  { family: "Google Sans Code", directory: "google-sans-code", fileName: "GoogleSansCode-Medium.ttf", fontWeight: 500 },
-  { family: "Google Sans Code", directory: "google-sans-code", fileName: "GoogleSansCode-Bold.ttf", fontWeight: 700 },
-  { family: "Atkinson Hyperlegible Next", directory: "atkinson-hyperlegible-next", fileName: "AtkinsonHyperlegibleNext-Regular.ttf", fontWeight: 400 },
-  { family: "Atkinson Hyperlegible Next", directory: "atkinson-hyperlegible-next", fileName: "AtkinsonHyperlegibleNext-Medium.ttf", fontWeight: 500 },
-  { family: "Atkinson Hyperlegible Next", directory: "atkinson-hyperlegible-next", fileName: "AtkinsonHyperlegibleNext-Bold.ttf", fontWeight: 700 },
-  { family: "IBM Plex Sans", directory: "ibm-plex-sans", fileName: "IBMPlexSans-Regular.ttf", fontWeight: 400 },
-  { family: "IBM Plex Sans", directory: "ibm-plex-sans", fileName: "IBMPlexSans-Medium.ttf", fontWeight: 500 },
-  { family: "IBM Plex Sans", directory: "ibm-plex-sans", fileName: "IBMPlexSans-Bold.ttf", fontWeight: 700 },
-  { family: "Source Sans 3", directory: "source-sans-3", fileName: "SourceSans3-Regular.ttf", fontWeight: 400 },
-  { family: "Source Sans 3", directory: "source-sans-3", fileName: "SourceSans3-Medium.ttf", fontWeight: 500 },
-  { family: "Source Sans 3", directory: "source-sans-3", fileName: "SourceSans3-Bold.ttf", fontWeight: 700 },
-  { family: "JetBrains Mono", directory: "jetbrains-mono", fileName: "JetBrainsMono-Regular.ttf", fontWeight: 400 },
-  { family: "JetBrains Mono", directory: "jetbrains-mono", fileName: "JetBrainsMono-Medium.ttf", fontWeight: 500 },
-  { family: "JetBrains Mono", directory: "jetbrains-mono", fileName: "JetBrainsMono-Bold.ttf", fontWeight: 700 },
-  { family: "Fira Code", directory: "fira-code", fileName: "FiraCode-Regular.ttf", fontWeight: 400 },
-  { family: "Fira Code", directory: "fira-code", fileName: "FiraCode-Medium.ttf", fontWeight: 500 },
-  { family: "Fira Code", directory: "fira-code", fileName: "FiraCode-Bold.ttf", fontWeight: 700 },
+  staticFontFace("Google Sans Code", "google-sans-code", "GoogleSansCode-Regular.ttf", 400),
+  staticFontFace("Google Sans Code", "google-sans-code", "GoogleSansCode-Medium.ttf", 500),
+  staticFontFace("Google Sans Code", "google-sans-code", "GoogleSansCode-Bold.ttf", 700),
+  staticFontFace("Atkinson Hyperlegible Next", "atkinson-hyperlegible-next", "AtkinsonHyperlegibleNext-Regular.ttf", 400),
+  staticFontFace("Atkinson Hyperlegible Next", "atkinson-hyperlegible-next", "AtkinsonHyperlegibleNext-Medium.ttf", 500),
+  staticFontFace("Atkinson Hyperlegible Next", "atkinson-hyperlegible-next", "AtkinsonHyperlegibleNext-Bold.ttf", 700),
+  staticFontFace("IBM Plex Sans", "ibm-plex-sans", "IBMPlexSans-Regular.ttf", 400),
+  staticFontFace("IBM Plex Sans", "ibm-plex-sans", "IBMPlexSans-Medium.ttf", 500),
+  staticFontFace("IBM Plex Sans", "ibm-plex-sans", "IBMPlexSans-Bold.ttf", 700),
+  staticFontFace("Source Sans 3", "source-sans-3", "SourceSans3-Regular.ttf", 400),
+  staticFontFace("Source Sans 3", "source-sans-3", "SourceSans3-Medium.ttf", 500),
+  staticFontFace("Source Sans 3", "source-sans-3", "SourceSans3-Bold.ttf", 700),
+  staticFontFace("JetBrains Mono", "jetbrains-mono", "JetBrainsMono-Regular.ttf", 400),
+  staticFontFace("JetBrains Mono", "jetbrains-mono", "JetBrainsMono-Medium.ttf", 500),
+  staticFontFace("JetBrains Mono", "jetbrains-mono", "JetBrainsMono-Bold.ttf", 700),
+  staticFontFace("Fira Code", "fira-code", "FiraCode-Regular.ttf", 400),
+  staticFontFace("Fira Code", "fira-code", "FiraCode-Medium.ttf", 500),
+  staticFontFace("Fira Code", "fira-code", "FiraCode-Bold.ttf", 700),
+  variableFontFace("Space Grotesk", "space-grotesk", "SpaceGrotesk-Variable.ttf"),
+  variableFontFace("Outfit", "outfit", "Outfit-Variable.ttf"),
+  variableFontFace("Plus Jakarta Sans", "plus-jakarta-sans", "PlusJakartaSans-Variable.ttf"),
+  variableFontFace("Manrope", "manrope", "Manrope-Variable.ttf"),
+  variableFontFace("Public Sans", "public-sans", "PublicSans-Variable.ttf"),
+  variableFontFace("Work Sans", "work-sans", "WorkSans-Variable.ttf"),
+  variableFontFace("Lexend", "lexend", "Lexend-Variable.ttf"),
+  variableFontFace("Inter", "inter", "Inter-Variable.ttf"),
+  variableFontFace("Literata", "literata", "Literata-Variable.ttf"),
+  variableFontFace("Fraunces", "fraunces", "Fraunces-Variable.ttf"),
+  variableFontFace("Newsreader", "newsreader", "Newsreader-Variable.ttf"),
+  variableFontFace("Noto Sans", "noto-sans", "NotoSans-Variable.ttf"),
+  staticFontFace("IBM Plex Mono", "ibm-plex-mono", "IBMPlexMono-Regular.ttf", 400),
+  staticFontFace("IBM Plex Mono", "ibm-plex-mono", "IBMPlexMono-Medium.ttf", 500),
+  staticFontFace("IBM Plex Mono", "ibm-plex-mono", "IBMPlexMono-Bold.ttf", 700),
+  staticFontFace("Space Mono", "space-mono", "SpaceMono-Regular.ttf", 400),
+  staticFontFace("Space Mono", "space-mono", "SpaceMono-Bold.ttf", 700),
+  staticFontFace("DM Mono", "dm-mono", "DMMono-Regular.ttf", 400),
+  staticFontFace("DM Mono", "dm-mono", "DMMono-Medium.ttf", 500),
+  variableFontFace("Inconsolata", "inconsolata", "Inconsolata-Variable.ttf"),
+  variableFontFace("Martian Mono", "martian-mono", "MartianMono-Variable.ttf"),
+  staticFontFace("Courier Prime", "courier-prime", "CourierPrime-Regular.ttf", 400),
+  staticFontFace("Courier Prime", "courier-prime", "CourierPrime-Bold.ttf", 700),
+  staticFontFace("Anonymous Pro", "anonymous-pro", "AnonymousPro-Regular.ttf", 400),
+  staticFontFace("Anonymous Pro", "anonymous-pro", "AnonymousPro-Bold.ttf", 700),
+  variableFontFace("Azeret Mono", "azeret-mono", "AzeretMono-Variable.ttf"),
+  variableFontFace("Red Hat Mono", "red-hat-mono", "RedHatMono-Variable.ttf"),
+  variableFontFace("Source Code Pro", "source-code-pro", "SourceCodePro-Variable.ttf"),
+  variableFontFace("Recursive Mono", "recursive-mono", "Recursive-Variable.ttf"),
 ];
 const PDF_DOCUMENT_FONT_STYLES = {
   atkinson: {
-    bodyFamily:
-      '"Atkinson Hyperlegible Next", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
-    displayFamily:
-      '"Atkinson Hyperlegible Next", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+    bodyFamily: `"Atkinson Hyperlegible Next", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Atkinson Hyperlegible Next", ${UI_SANS_FALLBACK}`,
   },
   plex: {
-    bodyFamily: '"IBM Plex Sans", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
-    displayFamily:
-      '"IBM Plex Sans", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+    bodyFamily: `"IBM Plex Sans", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"IBM Plex Sans", ${UI_SANS_FALLBACK}`,
   },
   source: {
-    bodyFamily: '"Source Sans 3", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
-    displayFamily:
-      '"Source Sans 3", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+    bodyFamily: `"Source Sans 3", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Source Sans 3", ${UI_SANS_FALLBACK}`,
+  },
+  "plus-jakarta": {
+    bodyFamily: `"Plus Jakarta Sans", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Plus Jakarta Sans", ${UI_SANS_FALLBACK}`,
+  },
+  inter: {
+    bodyFamily: `"Inter", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Inter", ${UI_SANS_FALLBACK}`,
+  },
+  outfit: {
+    bodyFamily: `"Outfit", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Outfit", ${UI_SANS_FALLBACK}`,
+  },
+  "space-grotesk": {
+    bodyFamily: `"Space Grotesk", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Space Grotesk", ${UI_SANS_FALLBACK}`,
+  },
+  manrope: {
+    bodyFamily: `"Manrope", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Manrope", ${UI_SANS_FALLBACK}`,
+  },
+  "public-sans": {
+    bodyFamily: `"Public Sans", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Public Sans", ${UI_SANS_FALLBACK}`,
+  },
+  "work-sans": {
+    bodyFamily: `"Work Sans", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Work Sans", ${UI_SANS_FALLBACK}`,
+  },
+  lexend: {
+    bodyFamily: `"Lexend", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Lexend", ${UI_SANS_FALLBACK}`,
+  },
+  "noto-sans": {
+    bodyFamily: `"Noto Sans", ${UI_SANS_FALLBACK}`,
+    displayFamily: `"Noto Sans", ${UI_SANS_FALLBACK}`,
+  },
+  newsreader: {
+    bodyFamily: `"Newsreader", ${UI_SERIF_FALLBACK}`,
+    displayFamily: `"Newsreader", ${UI_SERIF_FALLBACK}`,
+  },
+  editorial: {
+    bodyFamily: `"Literata", ${UI_SERIF_FALLBACK}`,
+    displayFamily: `"Fraunces", ${UI_SERIF_FALLBACK}`,
   },
   "google-sans-code": {
-    bodyFamily: '"Google Sans Code", "Cascadia Mono", "Consolas", monospace',
-    displayFamily: '"Google Sans Code", "Cascadia Mono", "Consolas", monospace',
+    bodyFamily: `"Google Sans Code", ${CODE_FALLBACK}`,
+    displayFamily: `"Google Sans Code", ${CODE_FALLBACK}`,
   },
 };
 const PDF_CODE_FONT_STYLES = {
   "google-sans-code": {
-    codeFamily: '"Google Sans Code", "Cascadia Code", "Consolas", monospace',
+    codeFamily: `"Google Sans Code", ${CODE_FALLBACK}`,
   },
   "jetbrains-mono": {
-    codeFamily: '"JetBrains Mono", "Cascadia Code", "Consolas", monospace',
+    codeFamily: `"JetBrains Mono", ${CODE_FALLBACK}`,
   },
   "fira-code": {
-    codeFamily: '"Fira Code", "JetBrains Mono", "Cascadia Code", "Consolas", monospace',
+    codeFamily: `"Fira Code", "JetBrains Mono", ${CODE_FALLBACK}`,
+  },
+  "ibm-plex-mono": {
+    codeFamily: `"IBM Plex Mono", "JetBrains Mono", ${CODE_FALLBACK}`,
+  },
+  inconsolata: {
+    codeFamily: `"Inconsolata", ${CODE_FALLBACK}`,
+  },
+  "martian-mono": {
+    codeFamily: `"Martian Mono", ${CODE_FALLBACK}`,
+  },
+  "recursive-mono": {
+    codeFamily: `"Recursive Mono", ${CODE_FALLBACK}`,
+  },
+  "source-code-pro": {
+    codeFamily: `"Source Code Pro", ${CODE_FALLBACK}`,
+  },
+  "red-hat-mono": {
+    codeFamily: `"Red Hat Mono", ${CODE_FALLBACK}`,
+  },
+  "azeret-mono": {
+    codeFamily: `"Azeret Mono", ${CODE_FALLBACK}`,
+  },
+  "dm-mono": {
+    codeFamily: `"DM Mono", ${CODE_FALLBACK}`,
+  },
+  "space-mono": {
+    codeFamily: `"Space Mono", ${CODE_FALLBACK}`,
+  },
+  "anonymous-pro": {
+    codeFamily: `"Anonymous Pro", ${CODE_FALLBACK}`,
+  },
+  "courier-prime": {
+    codeFamily: `"Courier Prime", ${CODE_FALLBACK}`,
   },
 };
 const IMAGE_PREVIEW_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"]);

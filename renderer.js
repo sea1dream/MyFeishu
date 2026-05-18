@@ -211,6 +211,7 @@ const state = {
   linkEditorAnchor: null,
   imageContextMenuPath: "",
   isPointerSelecting: false,
+  lastEditorPointer: null,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   sidebarResizeSession: null,
   isFocusMode: loadFocusMode(),
@@ -391,7 +392,7 @@ function refreshFontLayoutAfterLoad(fontFamilies) {
     ].filter(Boolean);
 
     Promise.all(
-      primaryFamilies.map((family) => document.fonts.load(`500 1em ${family}`)),
+      primaryFamilies.map((family) => document.fonts.load(`400 1em ${family}`)),
     )
       .then(() => {
         scheduleUiRefresh();
@@ -1802,6 +1803,10 @@ function paragraphHasContent(node) {
   return !isEmptyText(getBlockText(node));
 }
 
+function isEmptyPlainParagraph(node) {
+  return Boolean(node && node.tagName === "P" && !isGapParagraph(node) && !paragraphHasContent(node));
+}
+
 function isRangeInsideEditor(range) {
   return Boolean(range && refs.editor.contains(nodeToElement(range.commonAncestorContainer)));
 }
@@ -2051,8 +2056,10 @@ function createSelectionBookmark(range = getSelectionRange()) {
     collapsed: range.collapsed,
     startPath,
     startOffset: range.startOffset,
+    startRootOffset: range.startContainer === refs.editor ? range.startOffset : null,
     endPath,
     endOffset: range.endOffset,
+    endRootOffset: range.endContainer === refs.editor ? range.endOffset : null,
     startBlockId: startBoundary.blockId,
     startTextOffset: startBoundary.textOffset,
     endBlockId: endBoundary.blockId,
@@ -2067,6 +2074,10 @@ function applySelectionBookmark(bookmark) {
 
   const startNode = resolveNodePath(bookmark.startPath);
   const endNode = resolveNodePath(bookmark.endPath);
+  const startUsesRootOffset =
+    startNode === refs.editor && Number.isInteger(bookmark.startRootOffset);
+  const endUsesRootOffset =
+    endNode === refs.editor && Number.isInteger(bookmark.endRootOffset);
 
   if (!startNode || !endNode) {
     const fallbackRange = createRangeFromBookmarkBlocks(bookmark);
@@ -2077,8 +2088,8 @@ function applySelectionBookmark(bookmark) {
   const endBlockId = getBookmarkContainer(endNode)?.dataset?.nodeId || "";
 
   if (
-    (bookmark.startBlockId && startBlockId && bookmark.startBlockId !== startBlockId) ||
-    (bookmark.endBlockId && endBlockId && bookmark.endBlockId !== endBlockId)
+    (!startUsesRootOffset && bookmark.startBlockId && startBlockId && bookmark.startBlockId !== startBlockId) ||
+    (!endUsesRootOffset && bookmark.endBlockId && endBlockId && bookmark.endBlockId !== endBlockId)
   ) {
     const fallbackRange = createRangeFromBookmarkBlocks(bookmark);
     return applySelectionRange(fallbackRange);
@@ -2087,8 +2098,17 @@ function applySelectionBookmark(bookmark) {
   const range = document.createRange();
 
   try {
-    range.setStart(startNode, Math.min(bookmark.startOffset, startNode.length ?? startNode.childNodes.length));
-    range.setEnd(endNode, Math.min(bookmark.endOffset, endNode.length ?? endNode.childNodes.length));
+    const safeStartOffset = Math.min(
+      startUsesRootOffset ? bookmark.startRootOffset : bookmark.startOffset,
+      startNode.length ?? startNode.childNodes.length,
+    );
+    const safeEndOffset = Math.min(
+      endUsesRootOffset ? bookmark.endRootOffset : bookmark.endOffset,
+      endNode.length ?? endNode.childNodes.length,
+    );
+
+    range.setStart(startNode, safeStartOffset);
+    range.setEnd(endNode, safeEndOffset);
   } catch {
     const fallbackRange = createRangeFromBookmarkBlocks(bookmark);
     return applySelectionRange(fallbackRange);
@@ -2141,6 +2161,22 @@ function endPointerSelection() {
 
   state.isPointerSelecting = false;
   scheduleUiRefresh();
+}
+
+function resetLastEditorPointer() {
+  state.lastEditorPointer = null;
+}
+
+function rememberEditorPointer(event) {
+  if (!event || event.button !== 0) {
+    resetLastEditorPointer();
+    return;
+  }
+
+  state.lastEditorPointer = {
+    clientX: event.clientX,
+    clientY: event.clientY,
+  };
 }
 
 function clearSelectAllScope() {
@@ -2434,6 +2470,75 @@ function placeCaretFromPoint(clientX, clientY, fallbackTarget, { start = false }
   selection.addRange(range);
   state.savedSelection = createSelectionBookmark(range);
   return range;
+}
+
+function placeCaretNearEditorPointer(point) {
+  if (!point) {
+    return false;
+  }
+
+  const directRange = placeCaretFromPoint(point.clientX, point.clientY, refs.editor, { start: false });
+  const directContainer = nodeToElement(directRange?.startContainer);
+
+  if (directRange && isRangeInsideEditor(directRange) && !directContainer?.closest(SPECIAL_BLOCK_SELECTOR)) {
+    saveSelection();
+    return true;
+  }
+
+  const editableBlocks = [...refs.editor.children].filter((node) => !isSpecialBlock(node) && !isGapParagraph(node));
+
+  if (!editableBlocks.length) {
+    placeCaretInside(refs.editor.lastElementChild || refs.editor, { start: false });
+    saveSelection();
+    return true;
+  }
+
+  let targetBlock = editableBlocks[editableBlocks.length - 1];
+  let placeAtStart = false;
+
+  for (const block of editableBlocks) {
+    const rect = block.getBoundingClientRect();
+
+    if (point.clientY <= rect.top + rect.height / 2) {
+      targetBlock = block;
+      placeAtStart = true;
+      break;
+    }
+  }
+
+  placeCaretInside(targetBlock, { start: placeAtStart });
+  saveSelection();
+  return true;
+}
+
+function syncCaretToPointerIfNeeded() {
+  const point = state.lastEditorPointer;
+  resetLastEditorPointer();
+
+  if (!point || getSelectedSpecialBlock()) {
+    return;
+  }
+
+  const range = getSelectionRange();
+
+  if (!range || !range.collapsed || !isRangeInsideEditor(range)) {
+    placeCaretNearEditorPointer(point);
+    return;
+  }
+
+  const rect = getCaretRect(range);
+
+  if (!rect) {
+    placeCaretNearEditorPointer(point);
+    return;
+  }
+
+  const verticalMatched = point.clientY >= rect.top - 12 && point.clientY <= rect.bottom + 12;
+  const horizontalMatched = point.clientX >= rect.left - 180 && point.clientX <= rect.right + 180;
+
+  if (!verticalMatched || !horizontalMatched) {
+    placeCaretNearEditorPointer(point);
+  }
 }
 
 function moveCaretAfterNode(node) {
@@ -2838,6 +2943,28 @@ function collapseTransientGaps(except = null) {
   });
 }
 
+function insertEditableGapAfterBlock(block) {
+  if (!block?.isConnected) {
+    return false;
+  }
+
+  let gap = isGapParagraph(block.nextElementSibling) ? block.nextElementSibling : null;
+
+  if (!gap) {
+    gap = document.createElement("p");
+    gap.innerHTML = "<br>";
+    block.after(gap);
+  }
+
+  clearSelectAllScope();
+  clearSpecialSelection();
+  unmarkGap(gap);
+  placeCaretInside(gap, { start: true });
+  saveSelection();
+  queueEditorMutation({ history: "capture" });
+  return true;
+}
+
 function promoteGapParagraphIfNeeded(node) {
   if (!isGapParagraph(node)) {
     return;
@@ -2860,6 +2987,32 @@ function getVideoMigrationTarget(node) {
   }
 
   return node;
+}
+
+function hoistNestedSpecialBlocks() {
+  let moved = false;
+  let nestedBlocks = [...refs.editor.querySelectorAll(SPECIAL_BLOCK_SELECTOR)].filter((node) => {
+    return node.parentElement !== refs.editor && isSpecialBlock(getTopLevelNode(node));
+  });
+
+  while (nestedBlocks.length) {
+    nestedBlocks.forEach((node) => {
+      const hostBlock = getTopLevelNode(node);
+
+      if (!hostBlock || hostBlock === node || !isSpecialBlock(hostBlock)) {
+        return;
+      }
+
+      hostBlock.after(node);
+      moved = true;
+    });
+
+    nestedBlocks = [...refs.editor.querySelectorAll(SPECIAL_BLOCK_SELECTOR)].filter((node) => {
+      return node.parentElement !== refs.editor && isSpecialBlock(getTopLevelNode(node));
+    });
+  }
+
+  return moved;
 }
 
 function migrateLegacyCodeBlocks() {
@@ -2930,6 +3083,8 @@ function normalizeVideoEmbedBlock(block) {
 }
 
 function normalizeSpecialBlockLayout() {
+  hoistNestedSpecialBlocks();
+
   [...refs.editor.childNodes].forEach((node) => {
     if (node.nodeType === Node.TEXT_NODE && isEmptyText(node.textContent)) {
       node.remove();
@@ -2987,7 +3142,12 @@ function normalizeSpecialBlockLayout() {
 
     const prev = node.previousElementSibling;
     const next = node.nextElementSibling;
-    const shouldKeep = isSpecialBlock(prev) || isSpecialBlock(next);
+    const hasSpecialBefore = isSpecialBlock(prev);
+    const hasSpecialAfter = isSpecialBlock(next);
+    const shouldKeep =
+      (hasSpecialBefore && hasSpecialAfter) ||
+      (hasSpecialBefore && !next) ||
+      (!prev && hasSpecialAfter);
 
     if (!shouldKeep) {
       node.remove();
@@ -3173,6 +3333,46 @@ async function copyAnyCodeText(button, codeText) {
   showToast("Code copied to clipboard", "success", 1800);
 }
 
+function prepareResourceInsertionSelection() {
+  const range = restoreSelection();
+
+  if (!range || !isRangeInsideEditor(range)) {
+    return false;
+  }
+
+  const activeBlock = getActiveBlock(range);
+
+  if (!activeBlock || activeBlock === refs.editor) {
+    return false;
+  }
+
+  const selection = getSelection();
+  const insertionRange = document.createRange();
+  const isEmptyParagraphBlock =
+    (activeBlock.tagName === "P" || isGapParagraph(activeBlock)) && !paragraphHasContent(activeBlock);
+
+  if (isEmptyParagraphBlock) {
+    insertionRange.selectNode(activeBlock);
+  } else if (range.collapsed) {
+    const caretOffset = getTextOffsetWithinRoot(activeBlock, range.startContainer, range.startOffset);
+
+    if (!isSpecialBlock(activeBlock) && caretOffset <= 0) {
+      insertionRange.setStartBefore(activeBlock);
+    } else {
+      insertionRange.setStartAfter(activeBlock);
+    }
+
+    insertionRange.collapse(true);
+  } else {
+    return false;
+  }
+
+  selection.removeAllRanges();
+  selection.addRange(insertionRange);
+  state.savedSelection = createSelectionBookmark(insertionRange);
+  return true;
+}
+
 async function copyPreviewCode(button) {
   const codeElement = button?.closest(".preview-markdown-code-wrap")?.querySelector(".preview-markdown-code code");
 
@@ -3202,9 +3402,9 @@ function insertResourceFiles(files, markupBuilder) {
 
   clearSpecialSelection();
   collapseTransientGaps();
-  restoreSelection();
 
   files.forEach((file) => {
+    prepareResourceInsertionSelection();
     insertHtmlAtSelection(markupBuilder(file));
   });
 
@@ -3279,6 +3479,9 @@ function selectSpecialBlock(block) {
   ensureNodeId(block, block.dataset.kind || "block");
   clearSpecialSelection();
   collapseTransientGaps();
+  clearSelectAllScope();
+  getSelection().removeAllRanges();
+  state.savedSelection = null;
   block.classList.add("is-selected-block");
   state.selectedSpecialNodeId = block.dataset.nodeId;
   hideSelectionBubble();
@@ -3608,10 +3811,83 @@ function scheduleAutosave() {
   }, AUTOSAVE_DELAY);
 }
 
+function ensureResourcePlaceholder(node) {
+  let placeholder = node?.querySelector(".resource-placeholder");
+
+  if (placeholder) {
+    return placeholder;
+  }
+
+  placeholder = document.createElement("div");
+  placeholder.className = "resource-placeholder";
+  placeholder.hidden = true;
+  node?.append(placeholder);
+  return placeholder;
+}
+
+function ensureImageNodeMedia(node) {
+  let image = node?.querySelector("img");
+
+  if (image) {
+    return image;
+  }
+
+  image = document.createElement("img");
+  image.alt = node?.dataset?.name || "image";
+  node?.prepend(image);
+  return image;
+}
+
+function ensureAttachmentActionControls(node) {
+  const attachmentHead = node?.querySelector(".attachment-head");
+
+  if (!attachmentHead) {
+    return {
+      buttons: [],
+      previewButton: null,
+    };
+  }
+
+  let actions = attachmentHead.querySelector(".attachment-actions");
+
+  if (!actions) {
+    actions = document.createElement("div");
+    actions.className = "attachment-actions";
+    attachmentHead.append(actions);
+  }
+
+  let previewButton = actions.querySelector("[data-action='preview-attachment']");
+
+  if (!previewButton) {
+    previewButton = document.createElement("button");
+    previewButton.type = "button";
+    previewButton.className = "attachment-preview";
+    previewButton.dataset.action = "preview-attachment";
+    previewButton.textContent = "预览";
+    actions.prepend(previewButton);
+  }
+
+  let downloadButton = actions.querySelector("[data-action='download-attachment']");
+
+  if (!downloadButton) {
+    downloadButton = document.createElement("button");
+    downloadButton.type = "button";
+    downloadButton.className = "attachment-download";
+    downloadButton.dataset.action = "download-attachment";
+    downloadButton.textContent = "下载到 Downloads";
+    actions.append(downloadButton);
+  }
+
+  return {
+    buttons: [previewButton, downloadButton].filter(Boolean),
+    previewButton,
+  };
+}
+
 async function refreshImageNode(node) {
   const relativePath = node.dataset.src;
-  const placeholder = node.querySelector(".resource-placeholder");
-  const image = node.querySelector("img");
+  const placeholder = ensureResourcePlaceholder(node);
+  const image = ensureImageNodeMedia(node);
 
   if (!relativePath || !state.currentDocument) {
     return;
@@ -3640,10 +3916,9 @@ async function refreshImageNode(node) {
 
 async function refreshAttachmentNode(node) {
   const relativePath = node.dataset.src;
-  const placeholder = node.querySelector(".resource-placeholder");
-  const buttons = node.querySelectorAll("[data-action='download-attachment'], [data-action='preview-attachment']");
-  const previewButton = node.querySelector("[data-action='preview-attachment']");
+  const placeholder = ensureResourcePlaceholder(node);
   const previewKind = getAttachmentPreviewKind(node.dataset.name || relativePath);
+  const { buttons, previewButton } = ensureAttachmentActionControls(node);
 
   if (!relativePath || !state.currentDocument) {
     return;
@@ -4307,9 +4582,9 @@ async function insertVideoEmbeds(embeds) {
 
   clearSpecialSelection();
   collapseTransientGaps();
-  restoreSelection();
 
   embeds.forEach((embed) => {
+    prepareResourceInsertionSelection();
     insertHtmlAtSelection(buildVideoEmbedMarkup(embed).html);
   });
 
@@ -4824,6 +5099,50 @@ function removeSpecialBlock(block) {
   queueEditorMutation({ history: "capture" });
 }
 
+function removeEmptyBoundaryParagraph(block, direction) {
+  if (!isEmptyPlainParagraph(block)) {
+    return false;
+  }
+
+  const previousId = block.previousElementSibling?.dataset?.nodeId || null;
+  const nextId = block.nextElementSibling?.dataset?.nodeId || null;
+
+  block.remove();
+  clearSpecialSelection();
+  normalizeEditor();
+
+  const previousCandidate = queryNodeById(previousId);
+  const nextCandidate = queryNodeById(nextId);
+  const primaryCandidate = direction === "backward" ? previousCandidate || nextCandidate : nextCandidate || previousCandidate;
+  const placeCaretAtStart = direction !== "backward";
+
+  if (!primaryCandidate) {
+    placeCaretInside(refs.editor.lastElementChild || refs.editor, { start: false });
+  } else if (isSpecialBlock(primaryCandidate)) {
+    selectSpecialBlock(primaryCandidate);
+  } else if (isGapParagraph(primaryCandidate)) {
+    const fallbackBlock = direction === "backward"
+      ? primaryCandidate.previousElementSibling || primaryCandidate.nextElementSibling
+      : primaryCandidate.nextElementSibling || primaryCandidate.previousElementSibling;
+
+    if (fallbackBlock) {
+      if (isSpecialBlock(fallbackBlock)) {
+        selectSpecialBlock(fallbackBlock);
+      } else {
+        placeCaretInside(fallbackBlock, { start: placeCaretAtStart });
+      }
+    } else {
+      placeCaretInside(refs.editor.lastElementChild || refs.editor, { start: false });
+    }
+  } else {
+    placeCaretInside(primaryCandidate, { start: placeCaretAtStart });
+  }
+
+  saveSelection();
+  queueEditorMutation({ history: "capture" });
+  return true;
+}
+
 function handleDeletionKey(event) {
   if (!state.currentDocument || !["Backspace", "Delete"].includes(event.key)) {
     return false;
@@ -4865,6 +5184,15 @@ function handleDeletionKey(event) {
   }
 
   if (event.key === "Backspace" && isCaretAtBoundary(activeBlock, range, "start")) {
+    if (isEmptyPlainParagraph(activeBlock)) {
+      const previousSpecial = findAdjacentSpecialBlock(activeBlock, "backward");
+
+      if (previousSpecial) {
+        event.preventDefault();
+        return removeEmptyBoundaryParagraph(activeBlock, "backward");
+      }
+    }
+
     const previousSpecial = findAdjacentSpecialBlock(activeBlock, "backward");
 
     if (previousSpecial) {
@@ -4875,6 +5203,15 @@ function handleDeletionKey(event) {
   }
 
   if (event.key === "Delete" && isCaretAtBoundary(activeBlock, range, "end")) {
+    if (isEmptyPlainParagraph(activeBlock)) {
+      const nextSpecial = findAdjacentSpecialBlock(activeBlock, "forward");
+
+      if (nextSpecial) {
+        event.preventDefault();
+        return removeEmptyBoundaryParagraph(activeBlock, "forward");
+      }
+    }
+
     const nextSpecial = findAdjacentSpecialBlock(activeBlock, "forward");
 
     if (nextSpecial) {
@@ -5245,9 +5582,11 @@ refs.insertMenu.addEventListener("click", (event) => {
 refs.editor.addEventListener("mousedown", (event) => {
   hideImageContextMenu();
   clearSelectAllScope();
+  rememberEditorPointer(event);
 
   if (event.target.closest("a.editor-link") && (event.ctrlKey || event.metaKey)) {
     event.preventDefault();
+    resetLastEditorPointer();
     return;
   }
 
@@ -5256,16 +5595,19 @@ refs.editor.addEventListener("mousedown", (event) => {
   );
 
   if (attachmentAction) {
+    resetLastEditorPointer();
     return;
   }
 
   if (event.target.closest("[data-action='copy-code']") || event.target.closest(".code-language-select")) {
+    resetLastEditorPointer();
     clearSpecialSelection();
     collapseTransientGaps();
     return;
   }
 
   if (event.target.closest(".code-block-editor")) {
+    resetLastEditorPointer();
     if (event.button === 0) {
       beginPointerSelection();
     }
@@ -5277,6 +5619,7 @@ refs.editor.addEventListener("mousedown", (event) => {
   const codeBlockFrame = event.target.closest(".code-block-frame");
 
   if (codeBlockFrame) {
+    resetLastEditorPointer();
     const codeEditor = codeBlockFrame.querySelector(".code-block-editor");
     clearSpecialSelection();
     collapseTransientGaps();
@@ -5294,6 +5637,7 @@ refs.editor.addEventListener("mousedown", (event) => {
 
   if (gap) {
     event.preventDefault();
+    resetLastEditorPointer();
     activateGapParagraph(gap);
     return;
   }
@@ -5302,6 +5646,7 @@ refs.editor.addEventListener("mousedown", (event) => {
 
   if (specialBlock) {
     event.preventDefault();
+    resetLastEditorPointer();
     selectSpecialBlock(specialBlock);
     return;
   }
@@ -5366,6 +5711,7 @@ refs.editor.addEventListener("keydown", (event) => {
   const key = event.key.toLowerCase();
   const withModifier = event.ctrlKey || event.metaKey;
   const codeEditor = event.target.closest(".code-block-editor");
+  const activeGap = event.target.closest("p.editor-gap[data-gap-active='true']");
 
   if (withModifier && key === "a") {
     if (handleSelectAllShortcut(codeEditor)) {
@@ -5377,7 +5723,19 @@ refs.editor.addEventListener("keydown", (event) => {
   }
 
   if (handleDeletionKey(event)) {
+    event.stopPropagation();
     return;
+  }
+
+  if (
+    event.key === "Enter" &&
+    activeGap &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey
+  ) {
+    activeGap.removeAttribute("data-gap-active");
+    unmarkGap(activeGap);
   }
 
   if (codeEditor && event.key === "Tab") {
@@ -5422,6 +5780,11 @@ refs.editor.addEventListener("click", (event) => {
     copyCodeBlock(copyButton).catch((error) => {
       reportError("复制代码失败", error);
     });
+    return;
+  }
+
+  if (event.target.closest(SPECIAL_BLOCK_SELECTOR)) {
+    scheduleUiRefresh();
     return;
   }
 
@@ -5470,6 +5833,7 @@ refs.editor.addEventListener("focusin", rememberSelectionIfNeeded);
 refs.editor.addEventListener("mouseup", () => {
   endPointerSelection();
   rememberSelectionIfNeeded();
+  syncCaretToPointerIfNeeded();
 });
 refs.editor.addEventListener("keyup", rememberSelectionIfNeeded);
 document.addEventListener("selectionchange", rememberSelectionIfNeeded);
@@ -5663,6 +6027,10 @@ document.addEventListener("keydown", (event) => {
     return;
   }
 
+  if (event.defaultPrevented) {
+    return;
+  }
+
   if (!state.currentDocument) {
     return;
   }
@@ -5673,6 +6041,22 @@ document.addEventListener("keydown", (event) => {
     if (selectedSpecial) {
       event.preventDefault();
       removeSpecialBlock(selectedSpecial);
+      return;
+    }
+  }
+
+  if (
+    event.key === "Enter" &&
+    !event.ctrlKey &&
+    !event.metaKey &&
+    !event.altKey &&
+    !event.shiftKey
+  ) {
+    const selectedSpecial = getSelectedSpecialBlock();
+
+    if (selectedSpecial) {
+      event.preventDefault();
+      insertEditableGapAfterBlock(selectedSpecial);
       return;
     }
   }
