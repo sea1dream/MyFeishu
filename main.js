@@ -15,13 +15,13 @@ const {
   normalizeDocumentTitle: sharedNormalizeDocumentTitle,
   serializeDocumentPayload,
 } = require("./shared/document-format");
+const { resolveDocumentLibraryRoot, resolveDownloadsDirectory } = require("./shared/path-config");
 const { buildPdfExportHtml: buildPdfExportHtmlTemplate } = require("./main-modules/pdf-export-template");
 const ensureDocumentExtension = sharedEnsureDocumentExtension;
 const ensurePdfExtension = sharedEnsurePdfExtension;
 
 const DOC_FILTERS = [{ name: "FlowDoc 文档", extensions: [DOC_EXTENSION.slice(1)] }];
 const APP_ID = "com.flowdoc.editor";
-const DOCUMENT_LIBRARY_FOLDER_NAME = "本地文档";
 const LIBRARY_UNTAGGED_LABEL = "未分类";
 const ATTACHMENT_PREVIEW_LIMIT = 256 * 1024;
 const HIGHLIGHT_THEME_PATH = path.join(
@@ -156,7 +156,10 @@ function getAssetDirectories() {
 }
 
 function getDocumentLibraryRoot() {
-  return path.join(app.getPath("desktop"), DOCUMENT_LIBRARY_FOLDER_NAME);
+  return resolveDocumentLibraryRoot({
+    env: process.env,
+    getSystemPath: (key) => app.getPath(key),
+  });
 }
 
 function getLegacyStorageRoots() {
@@ -1515,7 +1518,10 @@ function copyAttachmentToDownloads(documentPath, resourcePath) {
     throw new Error("附件文件不存在，无法复制到 Downloads。");
   }
 
-  const downloadsDirectory = path.join(os.homedir(), "Downloads");
+  const downloadsDirectory = resolveDownloadsDirectory({
+    env: process.env,
+    getSystemPath: (key) => app.getPath(key),
+  });
   fs.mkdirSync(downloadsDirectory, { recursive: true });
 
   const targetPath = getUniqueTargetPath(downloadsDirectory, path.basename(resolved.absolutePath));
@@ -2234,7 +2240,10 @@ async function copyAttachmentToDownloadsAsync(documentPath, resourcePath) {
     throw new Error("附件文件不存在，无法复制到 Downloads。");
   }
 
-  const downloadsDirectory = path.join(os.homedir(), "Downloads");
+  const downloadsDirectory = resolveDownloadsDirectory({
+    env: process.env,
+    getSystemPath: (key) => app.getPath(key),
+  });
   await fsp.mkdir(downloadsDirectory, { recursive: true });
 
   const targetPath = await getUniqueTargetPathAsync(downloadsDirectory, path.basename(resolved.absolutePath));

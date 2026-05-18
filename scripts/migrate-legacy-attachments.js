@@ -10,6 +10,7 @@ const {
   normalizeDocumentTitle,
   serializeDocumentPayload,
 } = require("../shared/document-format");
+const { resolveDocumentLibraryRoot } = require("../shared/path-config");
 
 function parseArguments(argv) {
   const options = {};
@@ -201,9 +202,7 @@ async function copyDocumentBackup(backupRoot, documentsRoot, documentPath) {
 async function main() {
   const options = parseArguments(process.argv);
   const repoRoot = path.resolve(__dirname, "..");
-  const documentsRoot = path.resolve(
-    options["documents-root"] || path.join(process.env.USERPROFILE || "", "Desktop", "本地文档"),
-  );
+  const documentsRoot = path.resolve(options["documents-root"] || resolveDocumentLibraryRoot({ env: process.env }));
   const attachmentsRoot = path.resolve(options["attachments-root"] || path.join(repoRoot, "attachments"));
   const timestamp = new Date().toISOString().replace(/[:.]/gu, "-");
   const backupRoot = path.join(repoRoot, "migration-backups", `legacy-attachments-${timestamp}`);
