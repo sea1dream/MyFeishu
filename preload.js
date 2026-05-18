@@ -11,6 +11,8 @@ contextBridge.exposeInMainWorld("flowDocApi", {
   refreshDocumentPath: (payload) => ipcRenderer.invoke("document:refresh-path", payload),
   renameDocument: (payload) => ipcRenderer.invoke("document:rename", payload),
   loadDocumentLibrary: () => ipcRenderer.invoke("library:index"),
+  chooseDocumentLibraryRoot: () => ipcRenderer.invoke("library:choose-root"),
+  resetDocumentLibraryRoot: () => ipcRenderer.invoke("library:reset-root"),
   insertImages: (docPath) => ipcRenderer.invoke("resource:insert-images", { docPath }),
   insertAttachments: (docPath) => ipcRenderer.invoke("resource:insert-attachments", { docPath }),
   savePastedImage: (payload) => ipcRenderer.invoke("resource:save-pasted-image", payload),
@@ -20,6 +22,20 @@ contextBridge.exposeInMainWorld("flowDocApi", {
   revealImageInFolder: (payload) => ipcRenderer.invoke("resource:reveal-image-in-folder", payload),
   previewAttachment: (payload) => ipcRenderer.invoke("resource:preview-attachment", payload),
   downloadAttachment: (payload) => ipcRenderer.invoke("resource:download-attachment", payload),
+  onDocumentOpenRequested: (callback) => {
+    if (typeof callback !== "function") {
+      return () => {};
+    }
+
+    const listener = (_event, payload) => {
+      callback(payload);
+    };
+
+    ipcRenderer.on("app:open-document-request", listener);
+    return () => {
+      ipcRenderer.removeListener("app:open-document-request", listener);
+    };
+  },
   copyText: (text) => {
     clipboard.writeText(typeof text === "string" ? text : "");
     return true;

@@ -15,7 +15,8 @@ const {
   normalizeDocumentTitle: sharedNormalizeDocumentTitle,
   serializeDocumentPayload,
 } = require("./shared/document-format");
-const { resolveDocumentLibraryRoot, resolveDownloadsDirectory } = require("./shared/path-config");
+const { readDocumentLibraryPreference, writeDocumentLibraryPreference } = require("./shared/library-root-settings");
+const { resolveDocumentLibraryRootInfo, resolveDownloadsDirectory } = require("./shared/path-config");
 const { buildPdfExportHtml: buildPdfExportHtmlTemplate } = require("./main-modules/pdf-export-template");
 const ensureDocumentExtension = sharedEnsureDocumentExtension;
 const ensurePdfExtension = sharedEnsurePdfExtension;
@@ -137,6 +138,86 @@ const TEXT_PREVIEW_EXTENSIONS = new Set([
 ]);
 const VIDEO_PREVIEW_EXTENSIONS = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
 const AUDIO_PREVIEW_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
+let cachedDocumentLibraryPreference;
+let mainWindow = null;
+let pendingDocumentOpenPath = "";
+
+function isFlowDocFilePath(filePath) {
+  return typeof filePath === "string" && path.extname(filePath).toLowerCase() === DOC_EXTENSION;
+}
+
+function normalizeFlowDocLaunchPath(filePath) {
+  if (!isFlowDocFilePath(filePath)) {
+    return "";
+  }
+
+  return path.resolve(String(filePath).trim());
+}
+
+function extractFlowDocPathFromArgv(argv = []) {
+  const candidates = Array.isArray(argv) ? argv : [];
+
+  for (let index = candidates.length - 1; index >= 0; index -= 1) {
+    const token = String(candidates[index] || "").trim();
+
+    if (!token || token.startsWith("--") || token.startsWith("-psn_")) {
+      continue;
+    }
+
+    const normalized = normalizeFlowDocLaunchPath(token);
+
+    if (normalized) {
+      return normalized;
+    }
+  }
+
+  return "";
+}
+
+function focusMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  if (mainWindow.isMinimized()) {
+    mainWindow.restore();
+  }
+
+  mainWindow.focus();
+}
+
+function flushPendingDocumentOpenPath() {
+  if (!pendingDocumentOpenPath || !mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  if (mainWindow.webContents.isLoadingMainFrame()) {
+    return;
+  }
+
+  mainWindow.webContents.send("app:open-document-request", {
+    filePath: pendingDocumentOpenPath,
+  });
+  pendingDocumentOpenPath = "";
+}
+
+function queueDocumentOpenRequest(filePath) {
+  const normalizedPath = normalizeFlowDocLaunchPath(filePath);
+
+  if (!normalizedPath) {
+    return false;
+  }
+
+  pendingDocumentOpenPath = normalizedPath;
+  flushPendingDocumentOpenPath();
+  return true;
+}
+
+const hasSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!hasSingleInstanceLock) {
+  app.quit();
+}
 
 function getStorageRoot() {
   if (process.env.PORTABLE_EXECUTABLE_DIR) {
@@ -155,11 +236,35 @@ function getAssetDirectories() {
   };
 }
 
-function getDocumentLibraryRoot() {
-  return resolveDocumentLibraryRoot({
+function getLibrarySettingsOptions() {
+  return {
+    userDataPath: app.getPath("userData"),
+  };
+}
+
+function loadDocumentLibraryPreference() {
+  if (typeof cachedDocumentLibraryPreference === "undefined") {
+    cachedDocumentLibraryPreference = readDocumentLibraryPreference(getLibrarySettingsOptions());
+  }
+
+  return cachedDocumentLibraryPreference;
+}
+
+function saveDocumentLibraryPreference(rootPath) {
+  cachedDocumentLibraryPreference = writeDocumentLibraryPreference(rootPath, getLibrarySettingsOptions());
+  return cachedDocumentLibraryPreference;
+}
+
+function getDocumentLibraryRootInfo() {
+  return resolveDocumentLibraryRootInfo({
     env: process.env,
     getSystemPath: (key) => app.getPath(key),
+    savedRoot: loadDocumentLibraryPreference(),
   });
+}
+
+function getDocumentLibraryRoot() {
+  return getDocumentLibraryRootInfo().rootPath;
 }
 
 function getLegacyStorageRoots() {
@@ -203,26 +308,71 @@ function createWindow() {
   });
 
   window.loadFile(path.join(__dirname, "index.html"));
-}
+  mainWindow = window;
 
-app.whenReady().then(async () => {
-  app.setAppUserModelId(APP_ID);
-  await ensureGlobalAssetDirectories();
-  await ensureDocumentLibraryRoot();
-  createWindow();
+  window.webContents.on("did-finish-load", () => {
+    flushPendingDocumentOpenPath();
+  });
 
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
+  window.on("closed", () => {
+    if (mainWindow === window) {
+      mainWindow = null;
     }
   });
-});
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") {
-    app.quit();
-  }
-});
+  return window;
+}
+
+if (hasSingleInstanceLock) {
+  app.on("second-instance", (_event, argv) => {
+    queueDocumentOpenRequest(extractFlowDocPathFromArgv(argv));
+
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createWindow();
+      return;
+    }
+
+    focusMainWindow();
+    flushPendingDocumentOpenPath();
+  });
+
+  app.on("open-file", (event, filePath) => {
+    event.preventDefault();
+    queueDocumentOpenRequest(filePath);
+
+    if (app.isReady()) {
+      if (!mainWindow || mainWindow.isDestroyed()) {
+        createWindow();
+      } else {
+        focusMainWindow();
+      }
+
+      flushPendingDocumentOpenPath();
+    }
+  });
+
+  app.whenReady().then(async () => {
+    app.setAppUserModelId(APP_ID);
+    await ensureGlobalAssetDirectories();
+    await ensureDocumentLibraryRoot();
+    createWindow();
+    queueDocumentOpenRequest(extractFlowDocPathFromArgv(process.argv.slice(1)));
+    flushPendingDocumentOpenPath();
+
+    app.on("activate", () => {
+      if (BrowserWindow.getAllWindows().length === 0) {
+        createWindow();
+        flushPendingDocumentOpenPath();
+      }
+    });
+  });
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") {
+      app.quit();
+    }
+  });
+}
 
 function getDocumentTitleFromPath(filePath) {
   return path.basename(filePath, path.extname(filePath)) || "未命名文档";
@@ -621,8 +771,22 @@ function compareLibraryDocuments(left, right) {
   return left.title.localeCompare(right.title, "zh-CN");
 }
 
+function buildDocumentLibraryPayload(rootInfo, documents) {
+  const source = rootInfo?.source || "default";
+
+  return {
+    rootPath: rootInfo?.rootPath || "",
+    rootSource: source,
+    isCustomRoot: source === "saved",
+    isEnvironmentOverride: source === "environment",
+    untaggedLabel: LIBRARY_UNTAGGED_LABEL,
+    documents: Array.isArray(documents) ? documents : [],
+  };
+}
+
 function indexDocumentLibrary() {
-  const rootPath = getDocumentLibraryRoot();
+  const rootInfo = getDocumentLibraryRootInfo();
+  const rootPath = rootInfo.rootPath;
   ensureDocumentLibraryRoot();
   const documents = listFlowDocFiles(rootPath)
     .map((filePath) => {
@@ -644,11 +808,7 @@ function indexDocumentLibrary() {
     .filter(Boolean)
     .sort(compareLibraryDocuments);
 
-  return {
-    rootPath,
-    untaggedLabel: LIBRARY_UNTAGGED_LABEL,
-    documents,
-  };
+  return buildDocumentLibraryPayload(rootInfo, documents);
 }
 
 function splitBaseName(fileName) {
@@ -2023,7 +2183,8 @@ async function findMovedDocumentPathAsync(filePath, htmlSnapshot) {
 }
 
 async function indexDocumentLibraryAsync() {
-  const rootPath = getDocumentLibraryRoot();
+  const rootInfo = getDocumentLibraryRootInfo();
+  const rootPath = rootInfo.rootPath;
   await ensureDocumentLibraryRoot();
   const documentPaths = await listFlowDocFilesAsync(rootPath);
   const documents = (
@@ -2049,11 +2210,7 @@ async function indexDocumentLibraryAsync() {
     .filter(Boolean)
     .sort(compareLibraryDocuments);
 
-  return {
-    rootPath,
-    untaggedLabel: LIBRARY_UNTAGGED_LABEL,
-    documents,
-  };
+  return buildDocumentLibraryPayload(rootInfo, documents);
 }
 
 async function getUniqueTargetPathAsync(directory, desiredName) {
@@ -2685,4 +2842,33 @@ ipcMain.handle("resource:preview-attachment", async (_event, payload) => {
 
 ipcMain.handle("library:index", async () => {
   return indexDocumentLibraryAsync();
+});
+
+ipcMain.handle("library:choose-root", async (event) => {
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  const result = await dialog.showOpenDialog(browserWindow, {
+    title: "选择文档库目录",
+    defaultPath: getDocumentLibraryRoot(),
+    properties: ["openDirectory"],
+  });
+
+  if (result.canceled || result.filePaths.length === 0) {
+    return { canceled: true };
+  }
+
+  saveDocumentLibraryPreference(result.filePaths[0]);
+  await ensureDocumentLibraryRoot();
+  return {
+    canceled: false,
+    library: await indexDocumentLibraryAsync(),
+  };
+});
+
+ipcMain.handle("library:reset-root", async () => {
+  saveDocumentLibraryPreference("");
+  await ensureDocumentLibraryRoot();
+  return {
+    canceled: false,
+    library: await indexDocumentLibraryAsync(),
+  };
 });

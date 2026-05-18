@@ -22,8 +22,17 @@
     "asar": true,
     "electronDist": "node_modules/electron/dist",
     "directories": {
-      "output": "release"
+      "output": "release",
+      "buildResources": "build"
     },
+    "fileAssociations": [
+      {
+        "ext": "flowdoc",
+        "name": "FlowDoc Document",
+        "description": "FlowDoc 文档",
+        "icon": "flowdoc-file.ico"
+      }
+    ],
     "files": [
       "main.js",
       "pdf-export-preload.js",
@@ -39,7 +48,7 @@
       "node_modules/**/*"
     ],
     "win": {
-      "signAndEditExecutable": false,
+      "icon": "icon.ico",
       "target": [
         "nsis",
         "portable"
@@ -48,6 +57,7 @@
     "nsis": {
       "artifactName": "${productName}-${version}-${arch}-setup.${ext}",
       "oneClick": false,
+      "perMachine": true,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,

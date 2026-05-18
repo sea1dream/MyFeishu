@@ -627,11 +627,30 @@ body.is-resizing-sidebar {
   min-height: 0;
 }
 
+.library-root-controls {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.library-root-controls button {
+  padding: 9px 10px;
+  font-size: 0.88rem;
+}
+
+.library-root-meta,
 .library-root-path {
   margin: 0;
   color: rgba(247, 240, 230, 0.7);
   font-size: 0.88rem;
   line-height: 1.6;
+}
+
+.library-root-meta {
+  color: rgba(247, 240, 230, 0.8);
+}
+
+.library-root-path {
   word-break: break-all;
 }
 
@@ -1679,6 +1698,10 @@ body.focus-mode .editor {
   .library-toolbar {
     grid-template-columns: 1fr;
     flex-direction: column;
+  }
+
+  .library-root-controls {
+    grid-template-columns: 1fr;
   }
 
   .topbar-actions {

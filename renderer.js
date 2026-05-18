@@ -191,6 +191,9 @@ const state = {
   selectAllScope: null,
   library: {
     rootPath: "",
+    rootSource: "default",
+    isCustomRoot: false,
+    isEnvironmentOverride: false,
     documents: [],
     untaggedLabel: "未分类",
     selectedTag: "",
@@ -237,6 +240,9 @@ const refs = {
   addTagButton: document.getElementById("addTagButton"),
   docOutline: document.getElementById("docOutline"),
   toggleOutlineCollapseButton: document.getElementById("toggleOutlineCollapseButton"),
+  chooseLibraryRootButton: document.getElementById("chooseLibraryRootButton"),
+  resetLibraryRootButton: document.getElementById("resetLibraryRootButton"),
+  libraryRootMeta: document.getElementById("libraryRootMeta"),
   libraryRootPath: document.getElementById("libraryRootPath"),
   librarySearchInput: document.getElementById("librarySearchInput"),
   librarySortButton: document.getElementById("librarySortButton"),
@@ -1521,6 +1527,47 @@ function getFilteredLibraryDocuments() {
   });
 }
 
+function getLibraryRootMetaText() {
+  if (state.library.isEnvironmentOverride) {
+    return "当前目录由环境变量 FLOWDOC_LIBRARY_ROOT 锁定";
+  }
+
+  if (state.library.isCustomRoot) {
+    return "当前使用你手动选择的文档库目录";
+  }
+
+  if (state.library.rootSource === "legacy") {
+    return "当前沿用旧版桌面本地文档目录";
+  }
+
+  return "当前使用系统 Documents/FlowDoc Library 作为默认文档库";
+}
+
+function applyLibraryIndexResult(result = {}) {
+  state.library.rootPath = result.rootPath || "";
+  state.library.rootSource = result.rootSource || "default";
+  state.library.isCustomRoot = result.isCustomRoot === true;
+  state.library.isEnvironmentOverride = result.isEnvironmentOverride === true;
+  state.library.documents = Array.isArray(result.documents)
+    ? result.documents.map((documentItem) => ({
+        ...documentItem,
+        tags: normalizeTagList(documentItem.tags),
+      }))
+    : [];
+  state.library.recentDocuments = loadRecentDocuments();
+  state.library.untaggedLabel = result.untaggedLabel || "未分类";
+}
+
+function reconcileLibraryFilters() {
+  const availableTags = new Set(
+    buildLibraryTagSummary(state.library.documents).map((item) => item.tag),
+  );
+
+  if (state.library.selectedTag && !availableTags.has(state.library.selectedTag)) {
+    state.library.selectedTag = "";
+  }
+}
+
 function renderCurrentDocumentTags() {
   if (!refs.docTags) {
     return;
@@ -1555,6 +1602,27 @@ function renderLibraryView() {
   }
 
   refs.libraryRootPath.textContent = state.library.rootPath || "未找到文档库目录";
+  refs.libraryRootPath.title = state.library.rootPath || "";
+
+  if (refs.libraryRootMeta) {
+    refs.libraryRootMeta.textContent = getLibraryRootMetaText();
+  }
+
+  if (refs.chooseLibraryRootButton) {
+    refs.chooseLibraryRootButton.disabled = state.library.isEnvironmentOverride;
+    refs.chooseLibraryRootButton.title = state.library.isEnvironmentOverride
+      ? "当前目录由环境变量 FLOWDOC_LIBRARY_ROOT 指定，无法在界面中修改"
+      : "";
+  }
+
+  if (refs.resetLibraryRootButton) {
+    refs.resetLibraryRootButton.disabled = state.library.isEnvironmentOverride || !state.library.isCustomRoot;
+    refs.resetLibraryRootButton.title = state.library.isEnvironmentOverride
+      ? "当前目录由环境变量 FLOWDOC_LIBRARY_ROOT 指定，无法在界面中重置"
+      : state.library.isCustomRoot
+        ? ""
+        : "当前已经在使用默认文档库目录";
+  }
 
   const tagSummary = buildLibraryTagSummary();
   const activeTag = state.library.selectedTag;
@@ -3652,30 +3720,50 @@ function scheduleEmbeddedResourceRefresh() {
 
 async function loadDocumentLibrary() {
   const result = await api.loadDocumentLibrary();
-  state.library.rootPath = result.rootPath || "";
-  state.library.documents = Array.isArray(result.documents)
-    ? result.documents.map((documentItem) => ({
-        ...documentItem,
-        tags: normalizeTagList(documentItem.tags),
-      }))
-    : [];
-  state.library.recentDocuments = loadRecentDocuments();
-  state.library.untaggedLabel = result.untaggedLabel || "未分类";
+  applyLibraryIndexResult(result);
+  reconcileLibraryFilters();
+  renderLibraryView();
+}
 
-  const availableTags = new Set(
-    buildLibraryTagSummary(state.library.documents).map((item) => item.tag),
-  );
+async function chooseDocumentLibraryRoot() {
+  const result = await api.chooseDocumentLibraryRoot();
 
-  if (state.library.selectedTag && !availableTags.has(state.library.selectedTag)) {
-    state.library.selectedTag = "";
+  if (result?.canceled) {
+    return false;
   }
 
+  applyLibraryIndexResult(result?.library || {});
+  reconcileLibraryFilters();
   renderLibraryView();
+  return true;
+}
+
+async function resetDocumentLibraryRoot() {
+  const result = await api.resetDocumentLibraryRoot();
+
+  if (result?.canceled) {
+    return false;
+  }
+
+  applyLibraryIndexResult(result?.library || {});
+  reconcileLibraryFilters();
+  renderLibraryView();
+  return true;
 }
 
 async function openLibraryDocument(filePath) {
   const documentPayload = await api.openDocumentAtPath(filePath);
   await mountDocument(documentPayload, "文档已打开");
+}
+
+async function openDocumentFromSystemRequest(filePath) {
+  if (!filePath) {
+    return false;
+  }
+
+  const documentPayload = await api.openDocumentAtPath(filePath);
+  await mountDocument(documentPayload, "已从系统打开文档");
+  return true;
 }
 
 async function persistCurrentDocumentTags() {
@@ -4939,6 +5027,9 @@ refs.librarySearchInput.addEventListener("input", (event) => {
 refs.documentFontStyleButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
 refs.codeFontStyleButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
 refs.librarySortButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
+refs.chooseLibraryRootButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
+refs.resetLibraryRootButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
+refs.refreshLibraryButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
 
 refs.documentFontStyleButton?.addEventListener("click", () => {
   toggleChoiceMenu("document-font");
@@ -5022,6 +5113,43 @@ refs.refreshLibraryButton.addEventListener("click", () => {
     })
     .catch((error) => {
       reportError("刷新文档库失败", error);
+    })
+    .finally(() => {
+      endExternalControlInteraction();
+    });
+});
+
+refs.chooseLibraryRootButton?.addEventListener("click", () => {
+  chooseDocumentLibraryRoot()
+    .then((changed) => {
+      if (!changed) {
+        return;
+      }
+
+      showToast("文档库目录已更新", "success", 1600);
+    })
+    .catch((error) => {
+      reportError("更新文档库目录失败", error);
+    })
+    .finally(() => {
+      endExternalControlInteraction();
+    });
+});
+
+refs.resetLibraryRootButton?.addEventListener("click", () => {
+  resetDocumentLibraryRoot()
+    .then((changed) => {
+      if (!changed) {
+        return;
+      }
+
+      showToast("已恢复默认文档库目录", "success", 1600);
+    })
+    .catch((error) => {
+      reportError("恢复默认文档库目录失败", error);
+    })
+    .finally(() => {
+      endExternalControlInteraction();
     });
 });
 
@@ -5514,6 +5642,12 @@ window.addEventListener("focus", () => {
 window.addEventListener("blur", () => {
   endSidebarResize();
   closeChoiceMenus();
+});
+
+api.onDocumentOpenRequested?.((payload) => {
+  openDocumentFromSystemRequest(payload?.filePath).catch((error) => {
+    reportError("打开系统关联文档失败", error);
+  });
 });
 
 document.addEventListener("keydown", (event) => {

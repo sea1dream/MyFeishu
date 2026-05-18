@@ -53,6 +53,10 @@ function getConfiguredDocumentLibraryRoot(options = {}) {
   return normalizeDirectoryPath((options.env || process.env)[DOCUMENT_LIBRARY_ROOT_ENV_KEY]);
 }
 
+function getSavedDocumentLibraryRoot(options = {}) {
+  return normalizeDirectoryPath(options.savedRoot);
+}
+
 function directoryExists(targetPath) {
   try {
     return fs.statSync(targetPath).isDirectory();
@@ -61,26 +65,43 @@ function directoryExists(targetPath) {
   }
 }
 
-function resolveDocumentLibraryRoot(options = {}) {
+function resolveDocumentLibraryRootInfo(options = {}) {
   const configuredRoot = getConfiguredDocumentLibraryRoot(options);
 
   if (configuredRoot) {
-    return configuredRoot;
+    return {
+      rootPath: configuredRoot,
+      source: "environment",
+    };
+  }
+
+  const savedRoot = getSavedDocumentLibraryRoot(options);
+
+  if (savedRoot) {
+    return {
+      rootPath: savedRoot,
+      source: "saved",
+    };
   }
 
   const legacyRoot = getLegacyDocumentLibraryRoot(options);
 
   if (directoryExists(legacyRoot)) {
-    return legacyRoot;
+    return {
+      rootPath: legacyRoot,
+      source: "legacy",
+    };
   }
 
   const defaultRoot = getDefaultDocumentLibraryRoot(options);
+  return {
+    rootPath: defaultRoot,
+    source: "default",
+  };
+}
 
-  if (directoryExists(defaultRoot)) {
-    return defaultRoot;
-  }
-
-  return defaultRoot;
+function resolveDocumentLibraryRoot(options = {}) {
+  return resolveDocumentLibraryRootInfo(options).rootPath;
 }
 
 function resolveDownloadsDirectory(options = {}) {
@@ -94,6 +115,7 @@ module.exports = {
   LEGACY_DOCUMENT_LIBRARY_FOLDER_NAME,
   getDefaultDocumentLibraryRoot,
   getLegacyDocumentLibraryRoot,
+  resolveDocumentLibraryRootInfo,
   resolveDocumentLibraryRoot,
   resolveDownloadsDirectory,
 };

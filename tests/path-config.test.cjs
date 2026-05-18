@@ -28,6 +28,20 @@ test("resolveDocumentLibraryRoot prefers explicit environment override", () => {
   );
 });
 
+test("resolveDocumentLibraryRoot prefers saved user choice before legacy and default roots", () => {
+  const savedRoot = path.resolve("D:/chosen-flowdoc-root");
+
+  assert.equal(
+    resolveDocumentLibraryRoot({
+      env: {
+        USERPROFILE: "C:/Users/Test",
+      },
+      savedRoot,
+    }),
+    savedRoot,
+  );
+});
+
 test("document library helpers derive conventional default folders", () => {
   const options = {
     env: {
