@@ -43,10 +43,12 @@
 html,
 body {
   margin: 0;
+  height: 100%;
   min-height: 100%;
 }
 
 body {
+  overflow: hidden;
   font-family: var(--font-sans);
   color: var(--ink);
   background:
@@ -71,7 +73,9 @@ pre {
 .app-shell {
   display: grid;
   grid-template-columns: clamp(280px, var(--sidebar-width), 520px) 14px minmax(0, 1fr);
+  height: 100vh;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 .sidebar {
@@ -79,7 +83,8 @@ pre {
   flex-direction: column;
   gap: 20px;
   padding: 28px;
-  min-height: 100vh;
+  min-height: 0;
+  height: 100%;
   overflow: auto;
   background:
     linear-gradient(180deg, rgba(63, 39, 22, 0.92), rgba(28, 18, 12, 0.96)),
@@ -87,9 +92,14 @@ pre {
   color: #f7f0e6;
 }
 
+.sidebar > * {
+  flex: 0 0 auto;
+}
+
 .sidebar-resizer {
   position: relative;
-  min-height: 100vh;
+  min-height: 0;
+  height: 100%;
   cursor: col-resize;
   outline: none;
   background: linear-gradient(180deg, rgba(72, 48, 31, 0.12), rgba(72, 48, 31, 0.04));
@@ -706,9 +716,12 @@ body.is-resizing-sidebar {
 }
 
 .workspace {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
+  min-height: 0;
+  height: 100vh;
+  overflow: auto;
   padding: 22px;
   gap: 18px;
 }
@@ -783,7 +796,8 @@ body.is-resizing-sidebar {
 }
 
 .workspace-body {
-  min-height: 0;
+  min-height: auto;
+  overflow: visible;
 }
 
 .empty-state {
@@ -815,7 +829,7 @@ body.is-resizing-sidebar {
 
 .editor-surface {
   position: relative;
-  height: 100%;
+  min-height: 0;
   padding: 18px;
   border-radius: var(--radius-xl);
   background: rgba(255, 252, 247, 0.54);
@@ -824,7 +838,8 @@ body.is-resizing-sidebar {
 }
 
 .editor {
-  max-width: 920px;
+  width: min(100%, 1120px);
+  max-width: none;
   min-height: calc(100vh - 260px);
   margin: 0 auto;
   padding: 72px 84px;
@@ -1678,12 +1693,20 @@ body.focus-mode .editor {
 }
 
 @media (max-width: 1120px) {
+  body {
+    overflow: auto;
+  }
+
   .app-shell {
     grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar {
     gap: 16px;
+    height: auto;
+    overflow: visible;
   }
 
   .sidebar-resizer {
@@ -1691,6 +1714,8 @@ body.focus-mode .editor {
   }
 
   .workspace {
+    height: auto;
+    overflow: visible;
     padding-top: 0;
   }
 
