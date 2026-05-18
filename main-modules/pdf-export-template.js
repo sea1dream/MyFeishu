@@ -182,16 +182,68 @@ function buildPdfExportStyles(highlightThemeCss = "", fontFaceCss = "", fontFami
       justify-content: center;
       min-width: 54px;
       height: 54px;
-      padding: 0 10px;
+      padding: 0;
       border-radius: 16px;
+      overflow: hidden;
       background: #fff;
       border: 1px solid rgba(72, 48, 31, 0.14);
-      color: var(--accent);
-      font-size: 10pt;
-      font-weight: 700;
-      letter-spacing: 0.08em;
-      text-transform: uppercase;
     }
+
+    .attachment-export-badge {
+      position: relative;
+      display: grid;
+      grid-template-rows: 1fr auto;
+      align-items: center;
+      justify-items: center;
+      width: 100%;
+      height: 100%;
+      padding: 7px 6px 6px;
+      border-radius: 16px;
+      color: #fffdf9;
+      text-transform: uppercase;
+      background: linear-gradient(160deg, #8f6e58, #5d4636);
+    }
+
+    .attachment-export-badge::after {
+      content: "";
+      position: absolute;
+      top: 0;
+      right: 0;
+      width: 14px;
+      height: 14px;
+      border-bottom-left-radius: 8px;
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    .attachment-export-glyph {
+      font-size: 10pt;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+
+    .attachment-export-label {
+      font-size: 6.2pt;
+      line-height: 1;
+      font-weight: 800;
+      letter-spacing: 0.08em;
+    }
+
+    .attachment-export-badge--pdf { background: linear-gradient(160deg, #e5534b, #a02c25); }
+    .attachment-export-badge--python { background: linear-gradient(160deg, #4b7db8, #d0a940); }
+    .attachment-export-badge--markdown { background: linear-gradient(160deg, #465266, #222c3a); }
+    .attachment-export-badge--text { background: linear-gradient(160deg, #5d8fd9, #355f9f); }
+    .attachment-export-badge--document { background: linear-gradient(160deg, #3f79d3, #2852a0); }
+    .attachment-export-badge--sheet { background: linear-gradient(160deg, #2fa565, #1f6f45); }
+    .attachment-export-badge--slides { background: linear-gradient(160deg, #f08a34, #c86319); }
+    .attachment-export-badge--archive { background: linear-gradient(160deg, #8a68d8, #5d3ca9); }
+    .attachment-export-badge--executable { background: linear-gradient(160deg, #705c4d, #372c25); }
+    .attachment-export-badge--image { background: linear-gradient(160deg, #32a6a6, #1f6e74); }
+    .attachment-export-badge--video { background: linear-gradient(160deg, #c95ab2, #8a3b7a); }
+    .attachment-export-badge--audio { background: linear-gradient(160deg, #ef7c58, #bd5130); }
+    .attachment-export-badge--data { background: linear-gradient(160deg, #4fa0b5, #346c86); }
+    .attachment-export-badge--code { background: linear-gradient(160deg, #5d76c8, #394f94); }
+    .attachment-export-badge--generic { background: linear-gradient(160deg, #8f6e58, #5d4636); }
 
     .attachment-export-copy,
     .video-export-copy {
@@ -368,6 +420,114 @@ function buildPdfExportHtml({ title, html, resources, highlightThemeCss, fontFac
         return (extension || "FILE").slice(0, 5);
       }
 
+      function getAttachmentIconMeta(fileName) {
+        const baseName = String(fileName || "").split(/[\\\\/]/u).pop() || "";
+        const parts = baseName.split(".");
+        const extension = parts.length > 1 ? "." + parts.pop().toLowerCase() : "";
+        const upperExtension = extension.replace(".", "").toUpperCase() || "FILE";
+        const imageExtensions = new Set([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"]);
+        const markdownExtensions = new Set([".md", ".markdown"]);
+        const textExtensions = new Set([".txt", ".text", ".log"]);
+        const pdfExtensions = new Set([".pdf"]);
+        const videoExtensions = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
+        const audioExtensions = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
+        const documentExtensions = new Set([".doc", ".docx", ".rtf", ".odt", ".wps"]);
+        const sheetExtensions = new Set([".xls", ".xlsx", ".csv", ".tsv", ".ods"]);
+        const slidesExtensions = new Set([".ppt", ".pptx", ".odp", ".key"]);
+        const archiveExtensions = new Set([".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz"]);
+        const executableExtensions = new Set([".exe", ".msi", ".bat", ".cmd", ".ps1", ".apk", ".appimage"]);
+        const dataExtensions = new Set([".json", ".yaml", ".yml", ".toml", ".xml", ".ini", ".cfg"]);
+        const pythonExtensions = new Set([".py", ".pyw", ".ipynb"]);
+        const codeExtensions = new Set([
+          ".js",
+          ".jsx",
+          ".ts",
+          ".tsx",
+          ".cjs",
+          ".mjs",
+          ".css",
+          ".html",
+          ".htm",
+          ".java",
+          ".go",
+          ".rs",
+          ".php",
+          ".sh",
+          ".sql",
+          ".c",
+          ".cpp",
+          ".h",
+        ]);
+
+        if (pdfExtensions.has(extension)) {
+          return { category: "pdf", glyph: "A", label: "PDF" };
+        }
+
+        if (pythonExtensions.has(extension)) {
+          return { category: "python", glyph: "Py", label: "PY" };
+        }
+
+        if (markdownExtensions.has(extension)) {
+          return { category: "markdown", glyph: "#", label: "MD" };
+        }
+
+        if (textExtensions.has(extension)) {
+          return { category: "text", glyph: "T", label: "TXT" };
+        }
+
+        if (documentExtensions.has(extension)) {
+          return { category: "document", glyph: "W", label: "DOC" };
+        }
+
+        if (sheetExtensions.has(extension)) {
+          return { category: "sheet", glyph: "X", label: "XLS" };
+        }
+
+        if (slidesExtensions.has(extension)) {
+          return { category: "slides", glyph: "P", label: "PPT" };
+        }
+
+        if (archiveExtensions.has(extension)) {
+          return { category: "archive", glyph: "Z", label: "ZIP" };
+        }
+
+        if (executableExtensions.has(extension)) {
+          return { category: "executable", glyph: "!", label: "EXE" };
+        }
+
+        if (imageExtensions.has(extension)) {
+          return { category: "image", glyph: "I", label: "IMG" };
+        }
+
+        if (videoExtensions.has(extension)) {
+          return { category: "video", glyph: "V", label: "VID" };
+        }
+
+        if (audioExtensions.has(extension)) {
+          return { category: "audio", glyph: "A", label: "AUD" };
+        }
+
+        if (dataExtensions.has(extension)) {
+          return { category: "data", glyph: "{}", label: upperExtension.slice(0, 4) };
+        }
+
+        if (codeExtensions.has(extension)) {
+          return { category: "code", glyph: "<>", label: upperExtension.slice(0, 4) };
+        }
+
+        return { category: "generic", glyph: "F", label: getAttachmentIconLabel(fileName) };
+      }
+
+      function buildAttachmentIconMarkup(fileName) {
+        const meta = getAttachmentIconMeta(fileName);
+        return \`
+          <div class="attachment-export-badge attachment-export-badge--\${escapeHtml(meta.category)}">
+            <span class="attachment-export-glyph">\${escapeHtml(meta.glyph)}</span>
+            <span class="attachment-export-label">\${escapeHtml(meta.label)}</span>
+          </div>
+        \`;
+      }
+
       function sanitizeExportFragment(root) {
         root
           .querySelectorAll(
@@ -491,7 +651,7 @@ function buildPdfExportHtml({ title, html, resources, highlightThemeCss, fontFac
         const missingClass = resolved.exists ? "" : " is-missing";
         node.innerHTML = \`
           <div class="attachment-export-card\${missingClass}">
-            <div class="attachment-export-icon">\${escapeHtml(getAttachmentIconLabel(name))}</div>
+            <div class="attachment-export-icon">\${buildAttachmentIconMarkup(name)}</div>
             <div class="attachment-export-copy">
               <strong>\${escapeHtml(name)}</strong>
               <span>\${resolved.exists ? "附件已导出为图标卡片" : "附件资源缺失"}</span>

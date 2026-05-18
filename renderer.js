@@ -129,6 +129,13 @@ const ATTACHMENT_TEXT_EXTENSIONS = new Set([
 const ATTACHMENT_PDF_EXTENSIONS = new Set([".pdf"]);
 const ATTACHMENT_VIDEO_EXTENSIONS = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
 const ATTACHMENT_AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
+const ATTACHMENT_DOCUMENT_EXTENSIONS = new Set([".doc", ".docx", ".rtf", ".odt", ".wps"]);
+const ATTACHMENT_SPREADSHEET_EXTENSIONS = new Set([".xls", ".xlsx", ".csv", ".tsv", ".ods"]);
+const ATTACHMENT_PRESENTATION_EXTENSIONS = new Set([".ppt", ".pptx", ".odp", ".key"]);
+const ATTACHMENT_ARCHIVE_EXTENSIONS = new Set([".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz"]);
+const ATTACHMENT_EXECUTABLE_EXTENSIONS = new Set([".exe", ".msi", ".bat", ".cmd", ".ps1", ".apk", ".appimage"]);
+const ATTACHMENT_DATA_EXTENSIONS = new Set([".json", ".yaml", ".yml", ".toml", ".xml", ".ini", ".cfg"]);
+const ATTACHMENT_PYTHON_EXTENSIONS = new Set([".py", ".pyw", ".ipynb"]);
 const ATTACHMENT_CODE_LANGUAGE_BY_EXTENSION = new Map([
   [".c", "c"],
   [".cc", "cpp"],
@@ -1001,6 +1008,94 @@ function getAttachmentPreviewKind(value) {
 
 function getAttachmentPreviewCodeLanguage(value) {
   return ATTACHMENT_CODE_LANGUAGE_BY_EXTENSION.get(getPathExtension(value)) || "";
+}
+
+function getAttachmentIconMeta(value) {
+  const extension = getPathExtension(value);
+  const upperExtension = extension.replace(".", "").toUpperCase() || "FILE";
+
+  if (ATTACHMENT_PDF_EXTENSIONS.has(extension)) {
+    return { category: "pdf", glyph: "A", label: "PDF", description: "PDF 文档" };
+  }
+
+  if (ATTACHMENT_PYTHON_EXTENSIONS.has(extension)) {
+    return { category: "python", glyph: "Py", label: "PY", description: "Python 脚本" };
+  }
+
+  if (ATTACHMENT_MARKDOWN_EXTENSIONS.has(extension)) {
+    return { category: "markdown", glyph: "#", label: "MD", description: "Markdown 文档" };
+  }
+
+  if (ATTACHMENT_TEXT_EXTENSIONS.has(extension)) {
+    return { category: "text", glyph: "T", label: "TXT", description: "文本文件" };
+  }
+
+  if (ATTACHMENT_DOCUMENT_EXTENSIONS.has(extension)) {
+    return { category: "document", glyph: "W", label: "DOC", description: "文档文件" };
+  }
+
+  if (ATTACHMENT_SPREADSHEET_EXTENSIONS.has(extension)) {
+    return { category: "sheet", glyph: "X", label: "XLS", description: "表格文件" };
+  }
+
+  if (ATTACHMENT_PRESENTATION_EXTENSIONS.has(extension)) {
+    return { category: "slides", glyph: "P", label: "PPT", description: "演示文件" };
+  }
+
+  if (ATTACHMENT_ARCHIVE_EXTENSIONS.has(extension)) {
+    return { category: "archive", glyph: "Z", label: "ZIP", description: "压缩包" };
+  }
+
+  if (ATTACHMENT_EXECUTABLE_EXTENSIONS.has(extension)) {
+    return { category: "executable", glyph: "!", label: "EXE", description: "可执行文件" };
+  }
+
+  if (ATTACHMENT_IMAGE_EXTENSIONS.has(extension)) {
+    return { category: "image", glyph: "I", label: "IMG", description: "图片文件" };
+  }
+
+  if (ATTACHMENT_VIDEO_EXTENSIONS.has(extension)) {
+    return { category: "video", glyph: "V", label: "VID", description: "视频文件" };
+  }
+
+  if (ATTACHMENT_AUDIO_EXTENSIONS.has(extension)) {
+    return { category: "audio", glyph: "A", label: "AUD", description: "音频文件" };
+  }
+
+  if (ATTACHMENT_DATA_EXTENSIONS.has(extension)) {
+    return {
+      category: "data",
+      glyph: "{}",
+      label: upperExtension.slice(0, 4),
+      description: "数据文件",
+    };
+  }
+
+  if (getAttachmentPreviewCodeLanguage(value) || [".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rs", ".php"].includes(extension)) {
+    return {
+      category: "code",
+      glyph: "<>",
+      label: upperExtension.slice(0, 4),
+      description: "代码文件",
+    };
+  }
+
+  return {
+    category: "generic",
+    glyph: "F",
+    label: upperExtension.slice(0, 4),
+    description: "通用文件",
+  };
+}
+
+function buildAttachmentIconMarkup(fileName) {
+  const meta = getAttachmentIconMeta(fileName);
+  return `
+    <span class="attachment-icon-badge attachment-icon-badge--${escapeHtml(meta.category)}" aria-hidden="true">
+      <span class="attachment-icon-glyph">${escapeHtml(meta.glyph)}</span>
+      <span class="attachment-icon-label">${escapeHtml(meta.label)}</span>
+    </span>
+  `;
 }
 
 function formatFileSize(value) {
@@ -2603,11 +2698,14 @@ function buildAttachmentMarkup(file) {
   const safeName = escapeHtml(file.name);
   const safePath = escapeHtml(file.relativePath);
   const previewKind = getAttachmentPreviewKind(file.name || file.relativePath);
+  const iconMeta = getAttachmentIconMeta(file.name || file.relativePath);
 
   return `
     <div class="resource-card attachment-node" data-kind="attachment" data-src="${safePath}" data-name="${safeName}" data-node-id="${generateNodeId("attachment")}" contenteditable="false">
       <div class="attachment-head">
-        <button class="attachment-icon" type="button" data-action="download-attachment" title="复制到 Downloads">↓</button>
+        <button class="attachment-icon" type="button" data-action="download-attachment" title="下载到 Downloads · ${escapeHtml(iconMeta.description)}" aria-label="下载 ${safeName}">
+          ${buildAttachmentIconMarkup(file.name || file.relativePath)}
+        </button>
         <div class="attachment-copy">
           <strong>${safeName}</strong>
           <span>${safePath}</span>
@@ -3884,6 +3982,31 @@ function ensureAttachmentActionControls(node) {
   };
 }
 
+function ensureAttachmentIcon(node) {
+  const attachmentHead = node?.querySelector(".attachment-head");
+
+  if (!attachmentHead) {
+    return null;
+  }
+
+  let iconButton = attachmentHead.querySelector(".attachment-icon");
+
+  if (!iconButton) {
+    iconButton = document.createElement("button");
+    iconButton.type = "button";
+    iconButton.className = "attachment-icon";
+    iconButton.dataset.action = "download-attachment";
+    attachmentHead.prepend(iconButton);
+  }
+
+  const fileName = node.dataset.name || node.dataset.src || "";
+  const meta = getAttachmentIconMeta(fileName);
+  iconButton.title = `下载到 Downloads · ${meta.description}`;
+  iconButton.setAttribute("aria-label", `下载 ${fileName || meta.description}`);
+  iconButton.innerHTML = buildAttachmentIconMarkup(fileName);
+  return iconButton;
+}
+
 async function refreshImageNode(node) {
   const relativePath = node.dataset.src;
   const placeholder = ensureResourcePlaceholder(node);
@@ -3918,6 +4041,7 @@ async function refreshAttachmentNode(node) {
   const relativePath = node.dataset.src;
   const placeholder = ensureResourcePlaceholder(node);
   const previewKind = getAttachmentPreviewKind(node.dataset.name || relativePath);
+  ensureAttachmentIcon(node);
   const { buttons, previewButton } = ensureAttachmentActionControls(node);
 
   if (!relativePath || !state.currentDocument) {

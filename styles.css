@@ -1258,15 +1258,114 @@ body.is-resizing-sidebar {
 }
 
 .attachment-icon {
-  width: 46px;
-  height: 46px;
+  width: 54px;
+  height: 54px;
   border-radius: 14px;
-  font-size: 1.1rem;
-  font-weight: 700;
+  overflow: hidden;
 }
 
 .attachment-download {
   padding: 10px 12px;
+}
+
+.attachment-icon-badge {
+  position: relative;
+  display: grid;
+  grid-template-rows: 1fr auto;
+  align-items: center;
+  justify-items: center;
+  width: 100%;
+  height: 100%;
+  padding: 7px 6px 6px;
+  border-radius: 14px;
+  color: #fffdf9;
+  text-transform: uppercase;
+  background: linear-gradient(160deg, #8f6e58, #5d4636);
+}
+
+.attachment-icon-badge::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 14px;
+  height: 14px;
+  border-bottom-left-radius: 8px;
+  background: rgba(255, 255, 255, 0.28);
+}
+
+.attachment-icon-glyph {
+  font-size: 0.94rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+}
+
+.attachment-icon-label {
+  font-size: 0.58rem;
+  line-height: 1;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+}
+
+.attachment-icon-badge--pdf {
+  background: linear-gradient(160deg, #e5534b, #a02c25);
+}
+
+.attachment-icon-badge--python {
+  background: linear-gradient(160deg, #4b7db8, #d0a940);
+}
+
+.attachment-icon-badge--markdown {
+  background: linear-gradient(160deg, #465266, #222c3a);
+}
+
+.attachment-icon-badge--text {
+  background: linear-gradient(160deg, #5d8fd9, #355f9f);
+}
+
+.attachment-icon-badge--document {
+  background: linear-gradient(160deg, #3f79d3, #2852a0);
+}
+
+.attachment-icon-badge--sheet {
+  background: linear-gradient(160deg, #2fa565, #1f6f45);
+}
+
+.attachment-icon-badge--slides {
+  background: linear-gradient(160deg, #f08a34, #c86319);
+}
+
+.attachment-icon-badge--archive {
+  background: linear-gradient(160deg, #8a68d8, #5d3ca9);
+}
+
+.attachment-icon-badge--executable {
+  background: linear-gradient(160deg, #705c4d, #372c25);
+}
+
+.attachment-icon-badge--image {
+  background: linear-gradient(160deg, #32a6a6, #1f6e74);
+}
+
+.attachment-icon-badge--video {
+  background: linear-gradient(160deg, #c95ab2, #8a3b7a);
+}
+
+.attachment-icon-badge--audio {
+  background: linear-gradient(160deg, #ef7c58, #bd5130);
+}
+
+.attachment-icon-badge--data {
+  background: linear-gradient(160deg, #4fa0b5, #346c86);
+}
+
+.attachment-icon-badge--code {
+  background: linear-gradient(160deg, #5d76c8, #394f94);
+}
+
+.attachment-icon-badge--generic {
+  background: linear-gradient(160deg, #8f6e58, #5d4636);
 }
 
 .attachment-actions {
