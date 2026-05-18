@@ -8,6 +8,8 @@ contextBridge.exposeInMainWorld("flowDocApi", {
   openDocumentAtPath: (filePath) => ipcRenderer.invoke("document:open-path", { filePath }),
   saveDocument: (payload) => ipcRenderer.invoke("document:save", payload),
   exportPdf: (payload) => ipcRenderer.invoke("document:export-pdf", payload),
+  exportFlowzip: (payload) => ipcRenderer.invoke("archive:export-flowzip", payload),
+  importFlowzip: () => ipcRenderer.invoke("archive:import"),
   refreshDocumentPath: (payload) => ipcRenderer.invoke("document:refresh-path", payload),
   renameDocument: (payload) => ipcRenderer.invoke("document:rename", payload),
   loadDocumentLibrary: () => ipcRenderer.invoke("library:index"),

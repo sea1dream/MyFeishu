@@ -1,8 +1,10 @@
 "use strict";
 
+const { ensureDocumentMetadata } = require("./document-metadata");
+
 const DOC_EXTENSION = ".flowdoc";
 const PDF_EXTENSION = ".pdf";
-const CURRENT_DOCUMENT_VERSION = 2;
+const CURRENT_DOCUMENT_VERSION = 3;
 
 function ensureDocumentExtension(filePath) {
   return pathExtname(filePath) ? filePath : `${filePath}${DOC_EXTENSION}`;
@@ -79,7 +81,7 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function migrateDocumentPayload(rawPayload = {}) {
+function migrateDocumentPayload(rawPayload = {}, options = {}) {
   const source = rawPayload && typeof rawPayload === "object" ? rawPayload : {};
   const html = typeof source.html === "string" ? source.html : "";
   const tags = normalizeDocumentTags(source.tags);
@@ -87,6 +89,7 @@ function migrateDocumentPayload(rawPayload = {}) {
   const updatedAt = typeof source.updatedAt === "string" ? source.updatedAt : now;
   const createdAt =
     typeof source.createdAt === "string" ? source.createdAt : typeof source.updatedAt === "string" ? source.updatedAt : now;
+  const metadata = ensureDocumentMetadata(source.metadata, options.runtimeMetadata);
 
   return {
     kind: "flowdoc",
@@ -95,12 +98,13 @@ function migrateDocumentPayload(rawPayload = {}) {
     updatedAt,
     html,
     tags,
+    metadata,
   };
 }
 
 function serializeDocumentPayload(html, options = {}) {
   const existingPayload = options.existing && typeof options.existing === "object" ? options.existing : {};
-  const basePayload = migrateDocumentPayload(existingPayload);
+  const basePayload = migrateDocumentPayload(existingPayload, { runtimeMetadata: options.runtimeMetadata });
 
   return {
     ...basePayload,
@@ -110,6 +114,7 @@ function serializeDocumentPayload(html, options = {}) {
     updatedAt: new Date().toISOString(),
     html: typeof html === "string" ? html : "",
     tags: normalizeDocumentTags(options.tags ?? basePayload.tags),
+    metadata: ensureDocumentMetadata(basePayload.metadata, options.runtimeMetadata),
   };
 }
 

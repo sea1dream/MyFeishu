@@ -2,7 +2,9 @@
 
 const fs = require("node:fs");
 const fsp = fs.promises;
+const os = require("node:os");
 const path = require("node:path");
+const packageInfo = require("../package.json");
 const {
   DOC_EXTENSION,
   getDocumentTitleFromPath,
@@ -10,7 +12,18 @@ const {
   normalizeDocumentTitle,
   serializeDocumentPayload,
 } = require("../shared/document-format");
+const { buildRuntimeDocumentMetadata } = require("../shared/document-metadata");
 const { resolveDocumentLibraryRoot } = require("../shared/path-config");
+
+const RUNTIME_DOCUMENT_METADATA = buildRuntimeDocumentMetadata({
+  appId: "com.flowdoc.editor",
+  appName: packageInfo.productName || "FlowDoc",
+  appVersion: packageInfo.version || "0.0.0",
+  platform: process.platform,
+  arch: process.arch,
+  osRelease: os.release(),
+  hostname: os.hostname(),
+});
 
 function parseArguments(argv) {
   const options = {};
@@ -213,7 +226,7 @@ async function main() {
 
   for (const documentPath of documentPaths) {
     const raw = await fsp.readFile(documentPath, "utf8");
-    const parsed = migrateDocumentPayload(JSON.parse(raw));
+    const parsed = migrateDocumentPayload(JSON.parse(raw), { runtimeMetadata: RUNTIME_DOCUMENT_METADATA });
     const attachmentPaths = extractAttachmentPaths(parsed.html);
 
     if (!attachmentPaths.length) {
@@ -317,6 +330,7 @@ async function main() {
         ...documentPlan.parsedPayload,
       },
       tags: documentPlan.parsedPayload.tags,
+      runtimeMetadata: RUNTIME_DOCUMENT_METADATA,
     });
     await fsp.writeFile(documentPlan.documentPath, JSON.stringify(serialized, null, 2), "utf8");
   }

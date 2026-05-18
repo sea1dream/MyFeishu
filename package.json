@@ -6,6 +6,7 @@
   "productName": "FlowDoc",
   "author": "FlowDoc",
   "scripts": {
+    "generate:icons": "node scripts/generate-app-icons.js",
     "prestart": "node scripts/print-start-banner.js",
     "start": "electron .",
     "lint": "eslint .",
@@ -75,9 +76,13 @@
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
     "oh-my-logo": "^0.4.0",
-    "prettier": "^3.6.2"
+    "png-to-ico": "^3.0.1",
+    "prettier": "^3.6.2",
+    "sharp": "^0.34.5"
   },
   "dependencies": {
-    "highlight.js": "^11.11.1"
+    "adm-zip": "^0.5.17",
+    "highlight.js": "^11.11.1",
+    "pdf-lib": "^1.17.1"
   }
 }

@@ -11,10 +11,9 @@
     <div id="appShell" class="app-shell">
       <aside id="sidebar" class="sidebar">
         <div class="brand-lockup">
-          <span class="brand-mark">F</span>
+          <span class="brand-mark" aria-hidden="true"><img src="./assets/branding/flowdoc-mark.svg" alt="" /></span>
           <div>
             <h1>FlowDoc</h1>
-            <p>更接近飞书风格的本地文档编辑器</p>
           </div>
         </div>
 
@@ -23,6 +22,8 @@
           <button id="openDocButton" type="button">打开文档</button>
           <button id="saveDocButton" type="button">立即保存</button>
           <button id="exportPdfButton" type="button">导出 PDF</button>
+          <button id="exportFlowzipDocumentButton" type="button">打包 FlowZip</button>
+          <button id="importFlowzipButton" type="button">导入 FlowZip</button>
         </div>
 
         <div class="sidebar-card">
@@ -74,16 +75,15 @@
               </div>
             </div>
           </div>
-          <p>代码区会继续保留连字效果；不同字体对 <code>1 / I / l</code> 的区分度也会不一样。</p>
         </div>
 
         <div class="sidebar-card">
           <div class="sidebar-card-head">
             <h2>当前标签</h2>
           </div>
-          <div id="docTags" class="tag-list empty">打开文档后可以为它添加标签</div>
+          <div id="docTags" class="tag-list empty">暂无标签</div>
           <div class="tag-input-row">
-            <input id="tagInput" type="text" placeholder="输入标签后回车或点击添加" />
+            <input id="tagInput" type="text" placeholder="添加标签" />
             <button id="addTagButton" type="button">添加</button>
           </div>
         </div>
@@ -93,7 +93,7 @@
             <h2>文档目录</h2>
             <button id="toggleOutlineCollapseButton" type="button">全部折叠</button>
           </div>
-          <div id="docOutline" class="outline-list empty">打开文档后会根据标题自动生成目录</div>
+          <div id="docOutline" class="outline-list empty">暂无目录</div>
         </div>
 
         <div class="sidebar-card library-card">
@@ -105,10 +105,10 @@
             <button id="chooseLibraryRootButton" type="button">选择目录</button>
             <button id="resetLibraryRootButton" type="button">恢复默认</button>
           </div>
-          <p id="libraryRootMeta" class="library-root-meta">正在读取文档库配置...</p>
-          <p id="libraryRootPath" class="library-root-path">正在读取文档库...</p>
+          <p id="libraryRootMeta" class="library-root-meta">默认目录</p>
+          <p id="libraryRootPath" class="library-root-path">读取中...</p>
           <div class="library-toolbar">
-            <input id="librarySearchInput" type="text" placeholder="按标题、路径或标签搜索" />
+            <input id="librarySearchInput" type="text" placeholder="搜索文档" />
             <div class="choice-menu">
               <button
                 id="librarySortButton"
@@ -127,13 +127,6 @@
           <div id="libraryDocList" class="library-doc-list"></div>
         </div>
 
-        <div class="sidebar-card muted">
-          <h2>快捷键</h2>
-          <p><kbd>Ctrl</kbd> + <kbd>S</kbd> 立即保存</p>
-          <p><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> 切换专注模式</p>
-          <p>导出 PDF 会保留代码高亮，并将附件导出为图标卡片。</p>
-          <p>代码块支持语言切换和高亮渲染。</p>
-        </div>
       </aside>
 
       <div

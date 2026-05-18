@@ -1,0 +1,33 @@
+<svg width="64" height="64" viewBox="0 0 64 64" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <linearGradient id="flowdocBg" x1="10" y1="8" x2="54" y2="56" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#F5D8BE" />
+      <stop offset="0.55" stop-color="#DC8B66" />
+      <stop offset="1" stop-color="#A94D31" />
+    </linearGradient>
+    <linearGradient id="flowdocAccent" x1="21" y1="19" x2="46" y2="44" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFF7F0" />
+      <stop offset="1" stop-color="#F6E3D2" />
+    </linearGradient>
+    <filter id="flowdocShadow" x="1" y="3" width="62" height="61" filterUnits="userSpaceOnUse" color-interpolation-filters="sRGB">
+      <feFlood flood-opacity="0" result="BackgroundImageFix"/>
+      <feColorMatrix in="SourceAlpha" type="matrix" values="0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 127 0" result="hardAlpha"/>
+      <feOffset dy="7"/>
+      <feGaussianBlur stdDeviation="4"/>
+      <feComposite in2="hardAlpha" operator="out"/>
+      <feColorMatrix type="matrix" values="0 0 0 0 0.184314 0 0 0 0 0.105882 0 0 0 0 0.0705882 0 0 0 0.24 0"/>
+      <feBlend mode="normal" in2="BackgroundImageFix" result="effect1_dropShadow_1_1"/>
+      <feBlend mode="normal" in="SourceGraphic" in2="effect1_dropShadow_1_1" result="shape"/>
+    </filter>
+  </defs>
+
+  <g filter="url(#flowdocShadow)">
+    <rect x="9" y="8" width="46" height="46" rx="15" fill="url(#flowdocBg)"/>
+    <path d="M24 17.5H37.5L44 24V42.5C44 45.2614 41.7614 47.5 39 47.5H24C21.2386 47.5 19 45.2614 19 42.5V22.5C19 19.7386 21.2386 17.5 24 17.5Z" fill="url(#flowdocAccent)"/>
+    <path d="M37 17.5V22.25C37 23.7688 38.2312 25 39.75 25H44L37 17.5Z" fill="#F1C9AE"/>
+    <path d="M25.5 28.5C25.5 27.6716 26.1716 27 27 27H35.5C36.3284 27 37 27.6716 37 28.5C37 29.3284 36.3284 30 35.5 30H27C26.1716 30 25.5 29.3284 25.5 28.5Z" fill="#9D4E30"/>
+    <path d="M25.5 34C25.5 33.1716 26.1716 32.5 27 32.5H36.5C37.3284 32.5 38 33.1716 38 34C38 34.8284 37.3284 35.5 36.5 35.5H27C26.1716 35.5 25.5 34.8284 25.5 34Z" fill="#C46B45"/>
+    <path d="M25.5 39.5C25.5 38.6716 26.1716 38 27 38H33C33.8284 38 34.5 38.6716 34.5 39.5C34.5 40.3284 33.8284 41 33 41H27C26.1716 41 25.5 40.3284 25.5 39.5Z" fill="#D4875C"/>
+    <path d="M16.5 45.5C19.7596 42.8656 23.467 41.9554 27.6222 42.7694C31.7774 43.5835 35.4626 43.2653 38.6778 41.815L40.5 45.5C36.521 47.6737 32.1004 48.1496 27.2382 46.9278C22.3761 45.7059 18.4633 45.2299 15.5 45.5H16.5Z" fill="#6E3521" fill-opacity="0.9"/>
+  </g>
+</svg>

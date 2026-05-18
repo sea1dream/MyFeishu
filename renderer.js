@@ -238,6 +238,8 @@ const refs = {
   openDocButton: document.getElementById("openDocButton"),
   saveDocButton: document.getElementById("saveDocButton"),
   exportPdfButton: document.getElementById("exportPdfButton"),
+  exportFlowzipDocumentButton: document.getElementById("exportFlowzipDocumentButton"),
+  importFlowzipButton: document.getElementById("importFlowzipButton"),
   documentFontStyleButton: document.getElementById("documentFontStyleButton"),
   documentFontStyleMenu: document.getElementById("documentFontStyleMenu"),
   codeFontStyleButton: document.getElementById("codeFontStyleButton"),
@@ -732,7 +734,7 @@ function renderDocumentOutline() {
 
   if (!state.currentDocument) {
     refs.docOutline.className = "outline-list empty";
-    refs.docOutline.textContent = "打开文档后会根据标题自动生成目录";
+    refs.docOutline.textContent = "暂无目录";
     return;
   }
 
@@ -740,7 +742,7 @@ function renderDocumentOutline() {
 
   if (!items.length) {
     refs.docOutline.className = "outline-list empty";
-    refs.docOutline.textContent = "当前文档里还没有可加入目录的标题";
+    refs.docOutline.textContent = "暂无标题";
     return;
   }
 
@@ -1624,18 +1626,18 @@ function getFilteredLibraryDocuments() {
 
 function getLibraryRootMetaText() {
   if (state.library.isEnvironmentOverride) {
-    return "当前目录由环境变量 FLOWDOC_LIBRARY_ROOT 锁定";
+    return "环境变量目录";
   }
 
   if (state.library.isCustomRoot) {
-    return "当前使用你手动选择的文档库目录";
+    return "自定义目录";
   }
 
   if (state.library.rootSource === "legacy") {
-    return "当前沿用旧版桌面本地文档目录";
+    return "旧版目录";
   }
 
-  return "当前使用系统 Documents/FlowDoc Library 作为默认文档库";
+  return "默认目录";
 }
 
 function applyLibraryIndexResult(result = {}) {
@@ -1672,13 +1674,13 @@ function renderCurrentDocumentTags() {
 
   if (!state.currentDocument) {
     refs.docTags.className = "tag-list empty";
-    refs.docTags.textContent = "打开文档后可以为它添加标签";
+    refs.docTags.textContent = "暂无标签";
     return;
   }
 
   if (!tags.length) {
     refs.docTags.className = "tag-list empty";
-    refs.docTags.textContent = "当前文档还没有标签";
+    refs.docTags.textContent = "暂无标签";
     return;
   }
 
@@ -1696,7 +1698,7 @@ function renderLibraryView() {
     return;
   }
 
-  refs.libraryRootPath.textContent = state.library.rootPath || "未找到文档库目录";
+  refs.libraryRootPath.textContent = state.library.rootPath || "未设置";
   refs.libraryRootPath.title = state.library.rootPath || "";
 
   if (refs.libraryRootMeta) {
@@ -1836,15 +1838,21 @@ function updateDocumentTitlePreview(title) {
   document.title = `${title} - FlowDoc`;
 }
 
-function updateDocumentMeta(filePath, title = getDocumentTitleFromPath(filePath), tags = state.currentDocument?.tags || []) {
+function updateDocumentMeta(
+  filePath,
+  title = getDocumentTitleFromPath(filePath),
+  tags = state.currentDocument?.tags || [],
+  metadata = state.currentDocument?.metadata || null,
+) {
   const normalizedTags = normalizeTagList(tags);
 
   if (!state.currentDocument) {
-    state.currentDocument = { filePath, title, tags: normalizedTags };
+    state.currentDocument = { filePath, title, tags: normalizedTags, metadata };
   } else {
     state.currentDocument.filePath = filePath;
     state.currentDocument.title = title;
     state.currentDocument.tags = normalizedTags;
+    state.currentDocument.metadata = metadata;
   }
 
   updateDocumentTitlePreview(title);
@@ -3844,7 +3852,7 @@ async function saveDocument(reason = "自动保存完成", tone = "success", opt
     return false;
   }
 
-  await api.saveDocument({
+  const saveResult = await api.saveDocument({
     filePath: state.currentDocument.filePath,
     html,
     tags,
@@ -3853,6 +3861,15 @@ async function saveDocument(reason = "自动保存完成", tone = "success", opt
 
   state.lastSavedHtml = html;
   state.lastSavedTags = tags;
+
+  if (saveResult?.updatedAt) {
+    state.currentDocument.updatedAt = saveResult.updatedAt;
+  }
+
+  if (saveResult?.metadata) {
+    state.currentDocument.metadata = saveResult.metadata;
+  }
+
   setStatus(reason, tone);
 
   if (options.toast) {
@@ -3879,6 +3896,7 @@ async function exportCurrentDocumentAsPdf() {
     filePath: state.currentDocument.filePath,
     title: state.currentDocument.title,
     html,
+    metadata: state.currentDocument.metadata || null,
     fontOptions: {
       documentStyle: getDocumentFontStyle(state.fonts.documentStyle).id,
       codeStyle: getCodeFontStyle(state.fonts.codeStyle).id,
@@ -3892,6 +3910,53 @@ async function exportCurrentDocumentAsPdf() {
 
   setStatus("PDF 导出完成", "success");
   showToast(`PDF 已导出到 ${result.savedPath}`, "success", 2200);
+}
+
+async function exportCurrentDocumentAsFlowzip() {
+  setStatus("正在打包 FlowZip...");
+  if (state.currentDocument) {
+    await saveDocument("文档已保存", "success", {
+      force: true,
+      syncPath: true,
+      syncTitle: true,
+      skipCleanup: false,
+    });
+  }
+
+  const result = await api.exportFlowzip({
+    suggestedPath: state.currentDocument?.filePath || "",
+  });
+
+  if (result.canceled) {
+    setStatus("已取消打包 FlowZip");
+    return;
+  }
+
+  const warningText =
+    result.missingResourceCount > 0 ? `，但有 ${result.missingResourceCount} 个资源未打包` : "";
+  setStatus("FlowZip 打包完成", "success");
+  showToast(`已打包到 ${result.archivePath}${warningText}`, "success", 3200);
+}
+
+async function importFlowzipArchive() {
+  setStatus("正在导入 FlowZip...");
+  const result = await api.importFlowzip();
+
+  if (result.canceled) {
+    setStatus("已取消导入 FlowZip");
+    return;
+  }
+
+  await loadDocumentLibrary();
+
+  if (result.importedDocuments.length === 1) {
+    await openLibraryDocument(result.importedDocuments[0].filePath);
+  } else {
+    setStatus("FlowZip 导入完成", "success");
+  }
+
+  const warningText = result.warningCount > 0 ? `，有 ${result.warningCount} 项提示` : "";
+  showToast(`已导入 ${result.importedDocuments.length} 篇文档${warningText}`, "success", 3400);
 }
 
 function scheduleAutosave() {
@@ -4214,7 +4279,7 @@ async function mountDocument(documentPayload, successMessage) {
   const documentTitle = documentPayload.title || getDocumentTitleFromPath(documentPayload.filePath);
   const documentTags = normalizeTagList(documentPayload.tags);
 
-  updateDocumentMeta(documentPayload.filePath, documentTitle, documentTags);
+  updateDocumentMeta(documentPayload.filePath, documentTitle, documentTags, documentPayload.metadata || null);
   refs.emptyState.classList.add("hidden");
   refs.editorSurface.classList.remove("hidden");
   refs.editor.innerHTML = loadedHtml;
@@ -5375,6 +5440,18 @@ refs.saveDocButton.addEventListener("click", () => {
 refs.exportPdfButton.addEventListener("click", () => {
   exportCurrentDocumentAsPdf().catch((error) => {
     reportError("导出 PDF 失败", error);
+  });
+});
+
+refs.exportFlowzipDocumentButton.addEventListener("click", () => {
+  exportCurrentDocumentAsFlowzip().catch((error) => {
+    reportError("打包 FlowZip 失败", error);
+  });
+});
+
+refs.importFlowzipButton.addEventListener("click", () => {
+  importFlowzipArchive().catch((error) => {
+    reportError("导入 FlowZip 失败", error);
   });
 });
 

@@ -1,9 +1,20 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const AdmZip = require("adm-zip");
 const fs = require("node:fs");
 const fsp = fs.promises;
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const packageInfo = require("./package.json");
+const {
+  ensureFlowzipExtension: sharedEnsureFlowzipExtension,
+  FLOWZIP_EXTENSION,
+  FLOWZIP_KIND,
+  normalizeArchiveRelativePath,
+  normalizeFlowzipManifest,
+  rewriteHtmlResourcePaths,
+  serializeFlowzipManifest,
+} = require("./shared/archive-format");
 const {
   DOC_EXTENSION,
   PDF_EXTENSION,
@@ -15,12 +26,20 @@ const {
   normalizeDocumentTitle: sharedNormalizeDocumentTitle,
   serializeDocumentPayload,
 } = require("./shared/document-format");
+const {
+  buildMetadataKeywordList,
+  buildRuntimeDocumentMetadata,
+  ensureDocumentMetadata,
+} = require("./shared/document-metadata");
 const { readDocumentLibraryPreference, writeDocumentLibraryPreference } = require("./shared/library-root-settings");
 const { resolveDocumentLibraryRootInfo, resolveDownloadsDirectory } = require("./shared/path-config");
+const { applyPdfMetadataAsync } = require("./main-modules/pdf-metadata");
 const { buildPdfExportHtml: buildPdfExportHtmlTemplate } = require("./main-modules/pdf-export-template");
 const ensureDocumentExtension = sharedEnsureDocumentExtension;
+const ensureFlowzipExtension = sharedEnsureFlowzipExtension;
 
 const DOC_FILTERS = [{ name: "FlowDoc 文档", extensions: [DOC_EXTENSION.slice(1)] }];
+const FLOWZIP_FILTERS = [{ name: "FlowZip 压缩包", extensions: [FLOWZIP_EXTENSION.slice(1)] }];
 const APP_ID = "com.flowdoc.editor";
 const LIBRARY_UNTAGGED_LABEL = "未分类";
 const ATTACHMENT_PREVIEW_LIMIT = 256 * 1024;
@@ -33,6 +52,16 @@ const HIGHLIGHT_THEME_PATH = path.join(
 );
 const PDF_EXPORT_PRELOAD_PATH = path.join(__dirname, "pdf-export-preload.js");
 const LOCAL_FONTS_ROOT = path.join(__dirname, "assets", "fonts");
+const WINDOW_ICON_PATH = path.join(__dirname, "assets", "branding", "flowdoc-window.ico");
+const RUNTIME_DOCUMENT_METADATA = buildRuntimeDocumentMetadata({
+  appId: APP_ID,
+  appName: packageInfo.productName || "FlowDoc",
+  appVersion: packageInfo.version || "0.0.0",
+  platform: process.platform,
+  arch: process.arch,
+  osRelease: os.release(),
+  hostname: os.hostname(),
+});
 const UI_SANS_FALLBACK = '"Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif';
 const UI_SERIF_FALLBACK = '"Georgia", "Songti SC", "STSong", serif';
 const CODE_FALLBACK = '"Cascadia Code", "Consolas", monospace';
@@ -409,6 +438,7 @@ function createWindow() {
     minHeight: 760,
     backgroundColor: "#efe5d8",
     title: "FlowDoc Editor",
+    icon: WINDOW_ICON_PATH,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -585,6 +615,55 @@ function extractPdfResourcePathsFromHtml(html) {
   return [...resourcePaths];
 }
 
+function extractResourceDescriptorsFromHtml(html) {
+  const descriptors = new Map();
+  const source = String(html || "");
+  const tagPattern = /<[^>]+>/gu;
+  let match = tagPattern.exec(source);
+
+  while (match) {
+    const tag = match[0];
+    const isAttachmentNode =
+      /data-kind\s*=\s*"attachment"/iu.test(tag) || /class\s*=\s*"[^"]*\battachment-node\b[^"]*"/iu.test(tag);
+    const isImageNode = /data-kind\s*=\s*"image"/iu.test(tag) || /class\s*=\s*"[^"]*\bimage-node\b[^"]*"/iu.test(tag);
+
+    if (isAttachmentNode || isImageNode) {
+      const srcMatch = tag.match(/data-src\s*=\s*"([^"]+)"/iu);
+      const resourcePath = normalizeStoredResourcePath(srcMatch?.[1] || "");
+
+      if (resourcePath && !descriptors.has(resourcePath)) {
+        descriptors.set(resourcePath, {
+          resourcePath,
+          kind: isImageNode ? "image" : "attachment",
+        });
+      }
+    }
+
+    match = tagPattern.exec(source);
+  }
+
+  return [...descriptors.values()];
+}
+
+function getFlowzipResourceFolderName(documentIndex) {
+  return `doc-${String(documentIndex + 1).padStart(3, "0")}`;
+}
+
+function normalizeArchiveEntryPath(...segments) {
+  return normalizeArchiveRelativePath(
+    segments
+      .filter(Boolean)
+      .map((segment) => String(segment || "").replaceAll("\\", "/"))
+      .join("/"),
+  );
+}
+
+function buildArchiveDocumentRelativePath(documentPath, baseDirectory = "") {
+  const fallbackName = path.basename(documentPath || "") || `document${DOC_EXTENSION}`;
+  const relativePath = baseDirectory ? path.relative(baseDirectory, documentPath) : fallbackName;
+  return normalizeArchiveEntryPath(relativePath || fallbackName);
+}
+
 function getAttachmentReferenceRoots(currentFilePath) {
   return [
     getDocumentLibraryRoot(),
@@ -755,9 +834,28 @@ function resolvePdfFontFamilies(fontOptions = {}) {
   };
 }
 
+function buildPdfExportMetadata(documentRecord = {}) {
+  const metadata = ensureDocumentMetadata(documentRecord.metadata, RUNTIME_DOCUMENT_METADATA);
+  const appName = metadata.generator.appName || "FlowDoc";
+  const appVersion = metadata.generator.appVersion || "0.0.0";
+  const normalizedTitle = sharedNormalizeDocumentTitle(documentRecord.title || sharedGetDocumentTitleFromPath(documentRecord.filePath));
+
+  return {
+    documentMetadata: metadata,
+    title: normalizedTitle,
+    author: appName,
+    subject: `FlowDoc export ${metadata.documentId}`,
+    keywords: buildMetadataKeywordList(metadata),
+    creator: `${appName} ${appVersion}`,
+    producer: `${appName} PDF Export`,
+    creationDate: documentRecord.createdAt,
+    modificationDate: documentRecord.updatedAt || new Date().toISOString(),
+  };
+}
+
 async function readDocumentAsync(filePath) {
   const raw = await fsp.readFile(filePath, "utf8");
-  const data = migrateDocumentPayload(JSON.parse(raw));
+  const data = migrateDocumentPayload(JSON.parse(raw), { runtimeMetadata: RUNTIME_DOCUMENT_METADATA });
 
   if (!data || typeof data.html !== "string") {
     throw new Error("文档格式不正确，缺少 html 内容。");
@@ -771,6 +869,7 @@ async function readDocumentAsync(filePath) {
     version: data.version || 1,
     createdAt: data.createdAt || null,
     updatedAt: data.updatedAt || null,
+    metadata: data.metadata || null,
   };
 }
 
@@ -793,6 +892,7 @@ async function writeDocumentAsync(filePath, html, options = {}) {
   const payload = serializeDocumentPayload(html, {
     existing: existingPayload,
     tags: options.tags ?? preservedTags,
+    runtimeMetadata: RUNTIME_DOCUMENT_METADATA,
   });
 
   await fsp.mkdir(path.dirname(filePath), { recursive: true });
@@ -1161,6 +1261,19 @@ async function copyFileIntoLibraryAsync(folderName, sourceFilePath, options = {}
   };
 }
 
+async function writeBufferIntoLibraryAsync(folderName, fileBuffer, desiredName, options = {}) {
+  const assetDirectory = await getAssetDirectoryAsync(folderName);
+  const targetDirectory = await getResourceTargetDirectoryAsync(folderName, options.documentPath);
+  const safeName = path.basename(desiredName || `${folderName}-resource`);
+  const targetPath = await getUniqueTargetPathAsync(targetDirectory, safeName);
+  await fsp.writeFile(targetPath, fileBuffer);
+
+  return {
+    name: path.basename(targetPath),
+    relativePath: buildStoredResourcePathFromAbsolute(folderName, assetDirectory, targetPath),
+  };
+}
+
 async function saveClipboardImageAsync(dataUrl, suggestedName) {
   const assetDirectory = await getAssetDirectoryAsync("images");
   const { mimeType, buffer } = parseDataUrl(dataUrl);
@@ -1184,8 +1297,305 @@ async function removeDirectoryIfExistsAsync(directoryPath) {
   await fsp.rm(directoryPath, { recursive: true, force: true });
 }
 
+async function buildFlowzipDocumentsAsync(documentPaths, baseDirectory = "") {
+  const documents = [];
+
+  for (const [documentIndex, documentPath] of documentPaths.entries()) {
+    const document = await readDocumentAsync(documentPath);
+    const relativePath = buildArchiveDocumentRelativePath(documentPath, baseDirectory);
+    const archivePath = normalizeArchiveEntryPath("documents", relativePath);
+    const resources = [];
+    const missingResources = [];
+    let resourceIndex = 0;
+
+    for (const descriptor of extractResourceDescriptorsFromHtml(document.html)) {
+      const resolved = await resolveResourceAsync(documentPath, descriptor.resourcePath);
+
+      if (!resolved.exists || !resolved.absolutePath) {
+        missingResources.push(descriptor.resourcePath);
+        continue;
+      }
+
+      resourceIndex += 1;
+      const resourceName = path.basename(resolved.absolutePath) || path.basename(descriptor.resourcePath) || "resource";
+      const archiveResourcePath = normalizeArchiveEntryPath(
+        "resources",
+        getFlowzipResourceFolderName(documentIndex),
+        `${String(resourceIndex).padStart(3, "0")}-${resourceName}`,
+      );
+
+      resources.push({
+        originalPath: descriptor.resourcePath,
+        archivePath: archiveResourcePath,
+        kind: descriptor.kind,
+        fileName: resourceName,
+        absolutePath: resolved.absolutePath,
+      });
+    }
+
+    documents.push({
+      filePath: documentPath,
+      title: document.title,
+      relativePath,
+      archivePath,
+      content: await fsp.readFile(documentPath, "utf8"),
+      resources,
+      missingResources,
+    });
+  }
+
+  return documents;
+}
+
+async function writeFlowzipArchiveAsync(targetFilePath, manifest, documents) {
+  const archive = new AdmZip();
+  archive.addFile("manifest.json", Buffer.from(JSON.stringify(manifest, null, 2), "utf8"));
+
+  for (const document of documents) {
+    archive.addFile(document.archivePath, Buffer.from(document.content, "utf8"));
+
+    for (const resource of document.resources) {
+      archive.addLocalFile(resource.absolutePath, path.posix.dirname(resource.archivePath), path.posix.basename(resource.archivePath));
+    }
+  }
+
+  await archive.writeZipPromise(targetFilePath);
+}
+
+async function exportFlowzipArchiveAsync(browserWindow, options = {}) {
+  const mode = options.mode === "directory" ? "directory" : "document";
+  let documentPaths = [];
+  let sourceRoot = "";
+  let sourceName = "";
+  let defaultArchiveName = "flowdoc-bundle";
+
+  if (mode === "document") {
+    const documentSelection = await dialog.showOpenDialog(browserWindow, {
+      title: "选择要打包的文档",
+      defaultPath: options.suggestedPath || options.filePath || getDocumentLibraryRoot(),
+      filters: DOC_FILTERS,
+      properties: ["openFile"],
+    });
+
+    if (documentSelection.canceled || documentSelection.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    const filePath = ensureDocumentExtension(documentSelection.filePaths[0] || "");
+
+    if (!(await pathExists(filePath))) {
+      throw new Error("打包失败：选中的文档不存在，或者还没有保存到磁盘。");
+    }
+
+    documentPaths = [filePath];
+    sourceRoot = path.dirname(filePath);
+    sourceName = sharedGetDocumentTitleFromPath(filePath);
+    defaultArchiveName = normalizeDocumentTitle(sourceName);
+  } else {
+    const folderSelection = await dialog.showOpenDialog(browserWindow, {
+      title: "??????????",
+      defaultPath: getDocumentLibraryRoot(),
+      properties: ["openDirectory"],
+    });
+
+    if (folderSelection.canceled || folderSelection.filePaths.length === 0) {
+      return { canceled: true };
+    }
+
+    sourceRoot = folderSelection.filePaths[0];
+    sourceName = path.basename(sourceRoot) || "flowdoc-folder";
+    defaultArchiveName = normalizeDocumentTitle(sourceName);
+    documentPaths = await listFlowDocFilesAsync(sourceRoot);
+
+    if (!documentPaths.length) {
+      throw new Error("选中的目录里没有找到任何 FlowDoc 文档。");
+    }
+  }
+
+  const archiveSelection = await dialog.showSaveDialog(browserWindow, {
+    title: mode === "directory" ? "导出 FlowZip 目录压缩包" : "导出 FlowZip 文档压缩包",
+    defaultPath: path.join(
+      mode === "directory" ? path.dirname(sourceRoot) : path.dirname(documentPaths[0]),
+      ensureFlowzipExtension(defaultArchiveName),
+    ),
+    filters: FLOWZIP_FILTERS,
+  });
+
+  if (archiveSelection.canceled || !archiveSelection.filePath) {
+    return { canceled: true };
+  }
+
+  const archivePath = ensureFlowzipExtension(archiveSelection.filePath);
+  const documents = await buildFlowzipDocumentsAsync(documentPaths, sourceRoot);
+  const manifest = serializeFlowzipManifest({
+    source: {
+      mode,
+      rootName: sourceName,
+    },
+    documents: documents.map((document) => ({
+      archivePath: document.archivePath,
+      relativePath: document.relativePath,
+      title: document.title,
+      resources: document.resources.map((resource) => ({
+        originalPath: resource.originalPath,
+        archivePath: resource.archivePath,
+        kind: resource.kind,
+        fileName: resource.fileName,
+      })),
+      missingResources: document.missingResources,
+    })),
+  });
+
+  await writeFlowzipArchiveAsync(archivePath, manifest, documents);
+
+  return {
+    canceled: false,
+    archivePath,
+    documentCount: documents.length,
+    resourceCount: documents.reduce((total, document) => total + document.resources.length, 0),
+    missingResourceCount: documents.reduce((total, document) => total + document.missingResources.length, 0),
+    mode,
+  };
+}
+
+async function importFlowzipArchiveAsync(browserWindow) {
+  const archiveSelection = await dialog.showOpenDialog(browserWindow, {
+    title: "选择要导入的 FlowZip 压缩包",
+    defaultPath: getDocumentLibraryRoot(),
+    filters: FLOWZIP_FILTERS,
+    properties: ["openFile"],
+  });
+
+  if (archiveSelection.canceled || archiveSelection.filePaths.length === 0) {
+    return { canceled: true };
+  }
+
+  const targetSelection = await dialog.showOpenDialog(browserWindow, {
+    title: "选择导入后文档的存放目录",
+    defaultPath: getDocumentLibraryRoot(),
+    properties: ["openDirectory"],
+  });
+
+  if (targetSelection.canceled || targetSelection.filePaths.length === 0) {
+    return { canceled: true };
+  }
+
+  const archivePath = archiveSelection.filePaths[0];
+  const targetRoot = targetSelection.filePaths[0];
+  const archive = new AdmZip(archivePath);
+  const manifestEntry = archive.getEntry("manifest.json");
+
+  if (!manifestEntry) {
+    throw new Error("这个压缩包不是有效的 FlowZip：缺少 manifest.json。");
+  }
+
+  const rawManifest = JSON.parse(manifestEntry.getData().toString("utf8"));
+
+  if (rawManifest?.kind !== FLOWZIP_KIND) {
+    throw new Error("这个压缩包不是有效的 FlowZip：标识信息不匹配。");
+  }
+
+  const manifest = normalizeFlowzipManifest(rawManifest);
+
+  if (!manifest.documents.length) {
+    throw new Error("这个 FlowZip 里没有可导入的文档。");
+  }
+
+  const importedDocuments = [];
+  const warnings = [];
+
+  for (const documentDescriptor of manifest.documents) {
+    const documentEntry = archive.getEntry(documentDescriptor.archivePath);
+
+    if (!documentEntry) {
+      warnings.push(`缺少文档：${documentDescriptor.relativePath}`);
+      continue;
+    }
+
+    const relativePath = ensureDocumentExtension(documentDescriptor.relativePath || "");
+    const destinationDirectory = path.join(targetRoot, path.dirname(relativePath));
+    const destinationFileName = path.basename(relativePath);
+
+    await fsp.mkdir(destinationDirectory, { recursive: true });
+
+    const targetFilePath = await getUniqueTargetPathAsync(destinationDirectory, destinationFileName);
+    const rawDocument = JSON.parse(documentEntry.getData().toString("utf8"));
+    const migratedDocument = migrateDocumentPayload(rawDocument, { runtimeMetadata: RUNTIME_DOCUMENT_METADATA });
+    const resourceReplacements = {};
+
+    for (const resource of documentDescriptor.resources) {
+      const resourceEntry = archive.getEntry(resource.archivePath);
+
+      if (!resourceEntry) {
+        warnings.push(`缺少资源：${resource.fileName || resource.originalPath}`);
+        continue;
+      }
+
+      const importedResource = await writeBufferIntoLibraryAsync(
+        resource.kind === "image" ? "images" : "attachments",
+        resourceEntry.getData(),
+        resource.fileName || path.basename(resource.archivePath),
+        { documentPath: targetFilePath },
+      );
+      resourceReplacements[resource.originalPath] = importedResource.relativePath;
+    }
+
+    const payload = serializeDocumentPayload(rewriteHtmlResourcePaths(migratedDocument.html, resourceReplacements), {
+      existing: migratedDocument,
+      tags: migratedDocument.tags,
+      runtimeMetadata: RUNTIME_DOCUMENT_METADATA,
+    });
+
+    await fsp.writeFile(targetFilePath, JSON.stringify(payload, null, 2), "utf8");
+    importedDocuments.push({
+      filePath: targetFilePath,
+      title: sharedGetDocumentTitleFromPath(targetFilePath),
+    });
+
+    documentDescriptor.missingResources.forEach((resourcePath) => {
+      warnings.push(`打包时未找到资源：${resourcePath}`);
+    });
+  }
+
+  return {
+    canceled: false,
+    archivePath,
+    targetRoot,
+    importedDocuments,
+    warningCount: warnings.length,
+    warnings,
+  };
+}
+
 async function exportDocumentAsPdfAsync(browserWindow, payload) {
   const filePath = sharedEnsureDocumentExtension(payload.filePath);
+  const existingDocument =
+    (await pathExists(filePath))
+      ? await (async () => {
+          try {
+            return await readDocumentAsync(filePath);
+          } catch {
+            return null;
+          }
+        })()
+      : null;
+  const exportSnapshot = serializeDocumentPayload(payload.html, {
+    existing: existingDocument || {
+      createdAt: payload.createdAt,
+      updatedAt: payload.updatedAt,
+      metadata: payload.metadata,
+      tags: payload.tags,
+    },
+    tags: payload.tags ?? existingDocument?.tags ?? [],
+    runtimeMetadata: RUNTIME_DOCUMENT_METADATA,
+  });
+  const pdfMetadata = buildPdfExportMetadata({
+    filePath,
+    title: payload.title || existingDocument?.title || sharedGetDocumentTitleFromPath(filePath),
+    createdAt: exportSnapshot.createdAt,
+    updatedAt: exportSnapshot.updatedAt,
+    metadata: exportSnapshot.metadata,
+  });
   const defaultPdfPath = sharedEnsurePdfExtension(
     path.join(
       path.dirname(filePath),
@@ -1246,7 +1656,8 @@ async function exportDocumentAsPdfAsync(browserWindow, payload) {
       preferCSSPageSize: true,
       pageSize: "A4",
     });
-    await fsp.writeFile(exportPath, pdfBuffer);
+    const finalizedPdfBuffer = await applyPdfMetadataAsync(pdfBuffer, pdfMetadata);
+    await fsp.writeFile(exportPath, finalizedPdfBuffer);
 
     return {
       canceled: false,
@@ -1450,7 +1861,7 @@ ipcMain.handle("document:new", async (event) => {
   }
 
   const html = getDefaultHtml(selection.filePath);
-  await writeDocumentAsync(selection.filePath, html, { tags: [] });
+  const saved = await writeDocumentAsync(selection.filePath, html, { tags: [] });
 
   return {
     canceled: false,
@@ -1459,6 +1870,9 @@ ipcMain.handle("document:new", async (event) => {
       title: getDocumentTitleFromPath(selection.filePath),
       html,
       tags: [],
+      createdAt: saved.createdAt,
+      updatedAt: saved.updatedAt,
+      metadata: saved.metadata,
     },
   };
 });
@@ -1514,7 +1928,12 @@ ipcMain.handle("document:save", async (_event, payload) => {
           ...(await cleanupOrphanedAttachmentsAsync(filePath)),
         ]),
       ];
-  return { success: true, updatedAt: saved.updatedAt, cleanedAttachments };
+  return {
+    success: true,
+    updatedAt: saved.updatedAt,
+    metadata: saved.metadata,
+    cleanedAttachments,
+  };
 });
 
 ipcMain.handle("document:export-pdf", async (event, payload) => {
@@ -1524,6 +1943,33 @@ ipcMain.handle("document:export-pdf", async (event, payload) => {
 
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
   return exportDocumentAsPdfAsync(browserWindow, payload);
+});
+
+ipcMain.handle("archive:export-flowzip", async (event, payload) => {
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  const selection = await dialog.showMessageBox(browserWindow, {
+    type: "question",
+    buttons: ["选择文档", "选择目录", "取消"],
+    defaultId: 0,
+    cancelId: 2,
+    title: "打包 FlowZip",
+    message: "要打包单篇文档，还是整个文档目录？",
+    detail: "选择文档会打包一篇 .flowdoc 及其引用资源；选择目录会递归打包该目录下的所有 .flowdoc。",
+  });
+
+  if (selection.response === 2) {
+    return { canceled: true };
+  }
+
+  return exportFlowzipArchiveAsync(browserWindow, {
+    mode: selection.response === 1 ? "directory" : "document",
+    suggestedPath: payload?.suggestedPath || payload?.filePath || "",
+  });
+});
+
+ipcMain.handle("archive:import", async (event) => {
+  const browserWindow = BrowserWindow.fromWebContents(event.sender);
+  return importFlowzipArchiveAsync(browserWindow);
 });
 
 ipcMain.handle("document:refresh-path", async (_event, payload) => {
