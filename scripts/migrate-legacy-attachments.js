@@ -47,7 +47,7 @@ async function pathExists(targetPath) {
   try {
     await fsp.access(targetPath);
     return true;
-  } catch (_error) {
+  } catch {
     return false;
   }
 }
@@ -174,7 +174,7 @@ async function pruneEmptyDirectories(rootDirectory, startingDirectory) {
 
     try {
       entries = await fsp.readdir(currentDirectory);
-    } catch (_error) {
+    } catch {
       break;
     }
 
@@ -184,7 +184,7 @@ async function pruneEmptyDirectories(rootDirectory, startingDirectory) {
 
     try {
       await fsp.rmdir(currentDirectory);
-    } catch (_error) {
+    } catch {
       break;
     }
 

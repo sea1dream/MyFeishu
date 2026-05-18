@@ -25,7 +25,7 @@ function resolveSystemPath(key, fallbackPath, getSystemPath) {
       if (resolved) {
         return resolved;
       }
-    } catch (_error) {
+    } catch {
       // Fall back to a conventional path when the platform API is unavailable.
     }
   }
@@ -60,7 +60,7 @@ function getSavedDocumentLibraryRoot(options = {}) {
 function directoryExists(targetPath) {
   try {
     return fs.statSync(targetPath).isDirectory();
-  } catch (_error) {
+  } catch {
     return false;
   }
 }

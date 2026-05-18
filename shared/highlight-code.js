@@ -44,7 +44,7 @@ function highlightCode({ code, language, hljs }) {
       html: hljs.highlight(rawCode, { language: mode, ignoreIllegals: true }).value,
       detectedLanguage: mode,
     };
-  } catch (_error) {
+  } catch {
     return {
       html: escapeHtml(rawCode),
       detectedLanguage: "plaintext",

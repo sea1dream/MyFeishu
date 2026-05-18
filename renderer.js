@@ -49,7 +49,6 @@ const CODE_BLOCK_RENDER_DELAY = 120;
 const CODE_COPY_FEEDBACK_DELAY = 1800;
 const BLOCK_HANDLE_WIDTH = 42;
 const BLOCK_HANDLE_HEIGHT = 42;
-const BLOCK_HANDLE_GAP = 10;
 const DEFAULT_SIDEBAR_WIDTH = 320;
 const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 520;
@@ -1044,7 +1043,7 @@ function resolveMarkdownPreviewUrl(target, baseUrl) {
     }
 
     return resolved.toString();
-  } catch (_error) {
+  } catch {
     return "";
   }
 }
@@ -1305,7 +1304,7 @@ function normalizeExternalUrl(value) {
     }
 
     return url.toString();
-  } catch (_error) {
+  } catch {
     return "";
   }
 }
@@ -1795,14 +1794,6 @@ function isGapParagraph(node) {
   return Boolean(node && node.nodeType === Node.ELEMENT_NODE && node.matches("p.editor-gap"));
 }
 
-function isParagraphLike(node) {
-  return Boolean(
-    node &&
-      node.nodeType === Node.ELEMENT_NODE &&
-      node.matches("p, h1, h2, h3, blockquote, li"),
-  );
-}
-
 function getBlockText(node) {
   return normalizeCodeText(node?.innerText || node?.textContent || "");
 }
@@ -1892,7 +1883,7 @@ function getTextOffsetWithinRoot(root, node, offset) {
   try {
     range.selectNodeContents(root);
     range.setEnd(node, offset);
-  } catch (_error) {
+  } catch {
     return 0;
   }
 
@@ -2003,7 +1994,7 @@ function createRangeFromBookmarkBlocks(bookmark) {
   try {
     range.setStart(startBoundary.container, startBoundary.offset);
     range.setEnd(endBoundary.container, endBoundary.offset);
-  } catch (_error) {
+  } catch {
     return null;
   }
 
@@ -2098,7 +2089,7 @@ function applySelectionBookmark(bookmark) {
   try {
     range.setStart(startNode, Math.min(bookmark.startOffset, startNode.length ?? startNode.childNodes.length));
     range.setEnd(endNode, Math.min(bookmark.endOffset, endNode.length ?? endNode.childNodes.length));
-  } catch (_error) {
+  } catch {
     const fallbackRange = createRangeFromBookmarkBlocks(bookmark);
     return applySelectionRange(fallbackRange);
   }
@@ -2619,7 +2610,7 @@ function normalizeVideoEmbedUrl(value) {
     if (["bilibili.com", "m.bilibili.com", "player.bilibili.com"].includes(host)) {
       return normalizeBilibiliEmbedUrl(url);
     }
-  } catch (_error) {
+  } catch {
     return null;
   }
 
@@ -3361,7 +3352,7 @@ function persistHistoryState() {
       entries,
     };
     localStorage.setItem(key, JSON.stringify(payload));
-  } catch (_error) {
+  } catch {
     // Ignore storage failures.
   }
 }
@@ -3392,7 +3383,7 @@ function initializeHistoryState(currentHtml) {
         }));
       }
     }
-  } catch (_error) {
+  } catch {
     entries = [fallbackEntry];
   }
 
@@ -4446,7 +4437,7 @@ function openLinkEditor(anchor) {
   return true;
 }
 
-function editAnchorLink(anchor) {
+function _editAnchorLink(anchor) {
   if (!anchor) {
     return false;
   }

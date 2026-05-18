@@ -4,7 +4,7 @@ const { highlightCode } = require("./shared/highlight-code");
 
 try {
   hljs = require("highlight.js");
-} catch (_error) {
+} catch {
   hljs = null;
 }
 

@@ -28,7 +28,7 @@ function readSettingsObject(settingsPath) {
     const raw = fs.readFileSync(settingsPath, "utf8");
     const parsed = JSON.parse(raw);
     return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
-  } catch (_error) {
+  } catch {
     return {};
   }
 }
@@ -39,7 +39,7 @@ function writeSettingsObject(settingsPath, settings) {
   if (!entries.length) {
     try {
       fs.unlinkSync(settingsPath);
-    } catch (_error) {
+    } catch {
       // Ignore missing files when clearing settings.
     }
     return;

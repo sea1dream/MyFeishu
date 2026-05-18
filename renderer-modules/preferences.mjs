@@ -11,7 +11,7 @@ function readJson(key, fallback) {
   try {
     const raw = window.localStorage.getItem(key);
     return raw ? JSON.parse(raw) : fallback;
-  } catch (_error) {
+  } catch {
     return fallback;
   }
 }
@@ -19,7 +19,7 @@ function readJson(key, fallback) {
 function writeJson(key, value) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
-  } catch (_error) {
+  } catch {
     // Ignore storage failures.
   }
 }
@@ -33,7 +33,7 @@ export function loadSidebarWidth(defaultWidth) {
 export function saveSidebarWidth(width) {
   try {
     window.localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(width)));
-  } catch (_error) {
+  } catch {
     // Ignore storage failures.
   }
 }
@@ -45,7 +45,7 @@ export function loadFocusMode() {
 export function saveFocusMode(enabled) {
   try {
     window.localStorage.setItem(FOCUS_MODE_STORAGE_KEY, enabled ? "1" : "0");
-  } catch (_error) {
+  } catch {
     // Ignore storage failures.
   }
 }
@@ -58,7 +58,7 @@ export function loadLibrarySort(defaultValue = "recent") {
 export function saveLibrarySort(value) {
   try {
     window.localStorage.setItem(LIBRARY_SORT_STORAGE_KEY, String(value || "recent"));
-  } catch (_error) {
+  } catch {
     // Ignore storage failures.
   }
 }
@@ -102,7 +102,7 @@ export function loadDocumentFontStyle(defaultValue) {
 export function saveDocumentFontStyle(value) {
   try {
     window.localStorage.setItem(DOCUMENT_FONT_STYLE_STORAGE_KEY, String(value || ""));
-  } catch (_error) {
+  } catch {
     // Ignore storage failures.
   }
 }
@@ -115,7 +115,7 @@ export function loadCodeFontStyle(defaultValue) {
 export function saveCodeFontStyle(value) {
   try {
     window.localStorage.setItem(CODE_FONT_STYLE_STORAGE_KEY, String(value || ""));
-  } catch (_error) {
+  } catch {
     // Ignore storage failures.
   }
 }
