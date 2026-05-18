@@ -6,6 +6,7 @@
   "productName": "FlowDoc",
   "author": "FlowDoc",
   "scripts": {
+    "prestart": "node scripts/print-start-banner.js",
     "start": "electron .",
     "lint": "eslint .",
     "format": "prettier --write .",
@@ -73,6 +74,7 @@
     "electron-builder": "^26.0.12",
     "eslint": "^9.39.1",
     "globals": "^16.5.0",
+    "oh-my-logo": "^0.4.0",
     "prettier": "^3.6.2"
   },
   "dependencies": {

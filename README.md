@@ -136,6 +136,10 @@ npm install
 npm start
 ```
 
+补充说明：
+
+- `npm start` 现在会先在 PowerShell / cmd 里显示一个彩色的 `FLOWDOC` 启动 banner，再启动 Electron 主窗口
+
 ---
 
 ## Windows 一键启动脚本说明 🪄
