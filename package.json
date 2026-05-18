@@ -7,6 +7,12 @@
   "author": "FlowDoc",
   "scripts": {
     "start": "electron .",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "node --test tests/*.test.cjs tests/*.test.mjs",
+    "check": "npm run lint && npm run test",
+    "migrate:attachments": "node scripts/migrate-legacy-attachments.js",
     "dist": "electron-builder --win nsis portable",
     "dist:portable": "electron-builder --win portable"
   },
@@ -25,6 +31,10 @@
       "renderer.js",
       "index.html",
       "styles.css",
+      "assets/**/*",
+      "shared/**/*",
+      "main-modules/**/*",
+      "renderer-modules/**/*",
       "package.json",
       "node_modules/**/*"
     ],
@@ -48,8 +58,12 @@
     }
   },
   "devDependencies": {
+    "@eslint/js": "^9.39.1",
     "electron": "^41.2.1",
-    "electron-builder": "^26.0.12"
+    "electron-builder": "^26.0.12",
+    "eslint": "^9.39.1",
+    "globals": "^16.5.0",
+    "prettier": "^3.6.2"
   },
   "dependencies": {
     "highlight.js": "^11.11.1"

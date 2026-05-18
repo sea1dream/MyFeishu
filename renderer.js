@@ -1,3 +1,30 @@
+import { filterAndSortLibraryDocuments, LIBRARY_SORT_OPTIONS } from "./renderer-modules/library-utils.mjs";
+import {
+  CODE_FONT_STYLES,
+  DEFAULT_CODE_FONT_STYLE,
+  DEFAULT_DOCUMENT_FONT_STYLE,
+  DOCUMENT_FONT_STYLES,
+  getCodeFontStyle,
+  getDocumentFontStyle,
+} from "./renderer-modules/font-presets.mjs";
+import { buildOutlineRenderItems, toggleCollapsedOutlineId } from "./renderer-modules/outline-utils.mjs";
+import {
+  loadCollapsedOutlineIds,
+  loadCodeFontStyle,
+  loadDocumentFontStyle,
+  loadFocusMode,
+  loadLibrarySort,
+  loadRecentDocuments,
+  loadSidebarWidth,
+  recordRecentDocument,
+  saveCodeFontStyle,
+  saveCollapsedOutlineIds,
+  saveDocumentFontStyle,
+  saveFocusMode,
+  saveLibrarySort,
+  saveSidebarWidth,
+} from "./renderer-modules/preferences.mjs";
+
 const api = window.flowDocApi;
 
 const CODE_LANGUAGES = [
@@ -16,7 +43,9 @@ const CODE_LANGUAGES = [
 
 const HISTORY_LIMIT = 180;
 const HISTORY_PERSIST_LIMIT = 60;
-const HISTORY_INPUT_DELAY = 160;
+const HISTORY_INPUT_DELAY = 90;
+const AUTOSAVE_DELAY = 1200;
+const CODE_BLOCK_RENDER_DELAY = 120;
 const CODE_COPY_FEEDBACK_DELAY = 1800;
 const BLOCK_HANDLE_WIDTH = 42;
 const BLOCK_HANDLE_HEIGHT = 42;
@@ -24,7 +53,6 @@ const BLOCK_HANDLE_GAP = 10;
 const DEFAULT_SIDEBAR_WIDTH = 320;
 const MIN_SIDEBAR_WIDTH = 280;
 const MAX_SIDEBAR_WIDTH = 520;
-const SIDEBAR_WIDTH_STORAGE_KEY = "flowdoc-sidebar-width";
 const SPECIAL_BLOCK_SELECTOR = ".image-node, .attachment-node, .code-block-node, .video-embed-node";
 const EDITOR_SANITIZE_REMOVE_SELECTOR = [
   "script",
@@ -167,12 +195,29 @@ const state = {
     untaggedLabel: "未分类",
     selectedTag: "",
     searchText: "",
+    sortKey: loadLibrarySort("recent"),
+    recentDocuments: loadRecentDocuments(),
+  },
+  outline: {
+    collapsedIds: loadCollapsedOutlineIds(),
+  },
+  fonts: {
+    documentStyle: loadDocumentFontStyle(DEFAULT_DOCUMENT_FONT_STYLE),
+    codeStyle: loadCodeFontStyle(DEFAULT_CODE_FONT_STYLE),
   },
   attachmentPreview: null,
+  linkEditorAnchor: null,
   imageContextMenuPath: "",
   isPointerSelecting: false,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   sidebarResizeSession: null,
+  isFocusMode: loadFocusMode(),
+  codeBlockRenderTimers: new Map(),
+  resourceRefreshToken: 0,
+  resourceRefreshTimer: null,
+  isExternalControlInteracting: false,
+  externalControlInteractionTimer: null,
+  openChoiceMenu: "",
 };
 
 const refs = {
@@ -183,12 +228,19 @@ const refs = {
   openDocButton: document.getElementById("openDocButton"),
   saveDocButton: document.getElementById("saveDocButton"),
   exportPdfButton: document.getElementById("exportPdfButton"),
+  documentFontStyleButton: document.getElementById("documentFontStyleButton"),
+  documentFontStyleMenu: document.getElementById("documentFontStyleMenu"),
+  codeFontStyleButton: document.getElementById("codeFontStyleButton"),
+  codeFontStyleMenu: document.getElementById("codeFontStyleMenu"),
   docTags: document.getElementById("docTags"),
   tagInput: document.getElementById("tagInput"),
   addTagButton: document.getElementById("addTagButton"),
   docOutline: document.getElementById("docOutline"),
+  toggleOutlineCollapseButton: document.getElementById("toggleOutlineCollapseButton"),
   libraryRootPath: document.getElementById("libraryRootPath"),
   librarySearchInput: document.getElementById("librarySearchInput"),
+  librarySortButton: document.getElementById("librarySortButton"),
+  librarySortMenu: document.getElementById("librarySortMenu"),
   libraryTagFilters: document.getElementById("libraryTagFilters"),
   libraryDocList: document.getElementById("libraryDocList"),
   refreshLibraryButton: document.getElementById("refreshLibraryButton"),
@@ -198,6 +250,7 @@ const refs = {
   statusText: document.getElementById("statusText"),
   docName: document.getElementById("docName"),
   docPath: document.getElementById("docPath"),
+  focusModeButton: document.getElementById("focusModeButton"),
   selectionBubble: document.getElementById("selectionBubble"),
   blockHandle: document.getElementById("blockHandle"),
   blockHandleButton: document.getElementById("blockHandleButton"),
@@ -210,6 +263,11 @@ const refs = {
   attachmentPreviewBody: document.getElementById("attachmentPreviewBody"),
   attachmentPreviewClose: document.getElementById("attachmentPreviewClose"),
   attachmentPreviewDownload: document.getElementById("attachmentPreviewDownload"),
+  linkEditorModal: document.getElementById("linkEditorModal"),
+  linkEditorForm: document.getElementById("linkEditorForm"),
+  linkEditorInput: document.getElementById("linkEditorInput"),
+  linkEditorCancel: document.getElementById("linkEditorCancel"),
+  linkEditorRemove: document.getElementById("linkEditorRemove"),
 };
 
 function setStatus(message, tone = "") {
@@ -228,6 +286,245 @@ function showToast(message, tone = "success", duration = 2600) {
   }, duration);
 }
 
+function getChoiceMenuEntries() {
+  return [
+    { id: "document-font", button: refs.documentFontStyleButton, menu: refs.documentFontStyleMenu },
+    { id: "code-font", button: refs.codeFontStyleButton, menu: refs.codeFontStyleMenu },
+    { id: "library-sort", button: refs.librarySortButton, menu: refs.librarySortMenu },
+  ];
+}
+
+function setChoiceTriggerLabel(button, label) {
+  const labelNode = button?.querySelector(".choice-trigger-label");
+
+  if (labelNode) {
+    labelNode.textContent = label;
+  }
+}
+
+function setChoiceMenuOpenState(entry, isOpen) {
+  if (!entry?.button || !entry.menu) {
+    return;
+  }
+
+  entry.button.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  entry.menu.classList.toggle("hidden", !isOpen);
+}
+
+function closeChoiceMenus(exceptMenuId = "") {
+  getChoiceMenuEntries().forEach((entry) => {
+    setChoiceMenuOpenState(entry, Boolean(exceptMenuId) && entry.id === exceptMenuId);
+  });
+  state.openChoiceMenu = exceptMenuId;
+}
+
+function toggleChoiceMenu(menuId) {
+  closeChoiceMenus(state.openChoiceMenu === menuId ? "" : menuId);
+}
+
+function isChoiceMenuTarget(target) {
+  return Boolean(target?.closest?.(".choice-menu"));
+}
+
+function renderChoiceOptions(menu, items, selectedValue, menuId) {
+  if (!menu) {
+    return;
+  }
+
+  menu.innerHTML = items
+    .map((item) => {
+      const optionValue = item.value ?? item.id ?? "";
+      const optionLabel = item.label ?? String(optionValue);
+      const isActive = optionValue === selectedValue;
+      const note = item.note ? `<span class="choice-option-note">${escapeHtml(item.note)}</span>` : "";
+      return `
+        <button
+          type="button"
+          class="choice-option${isActive ? " is-active" : ""}"
+          data-choice-menu-id="${escapeHtml(menuId)}"
+          data-choice-value="${escapeHtml(optionValue)}"
+          role="option"
+          aria-selected="${isActive ? "true" : "false"}"
+        >
+          <span class="choice-option-title">${escapeHtml(optionLabel)}</span>
+          ${note}
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function refreshFontSelectionUi() {
+  const documentPreset = getDocumentFontStyle(state.fonts.documentStyle);
+  const codePreset = getCodeFontStyle(state.fonts.codeStyle);
+  setChoiceTriggerLabel(refs.documentFontStyleButton, documentPreset.label);
+  setChoiceTriggerLabel(refs.codeFontStyleButton, codePreset.label);
+  renderChoiceOptions(refs.documentFontStyleMenu, DOCUMENT_FONT_STYLES, documentPreset.id, "document-font");
+  renderChoiceOptions(refs.codeFontStyleMenu, CODE_FONT_STYLES, codePreset.id, "code-font");
+}
+
+function refreshLibrarySortUi() {
+  const sortOption =
+    LIBRARY_SORT_OPTIONS.find((option) => option.value === state.library.sortKey) || LIBRARY_SORT_OPTIONS[0];
+  state.library.sortKey = sortOption.value;
+  setChoiceTriggerLabel(refs.librarySortButton, sortOption.label);
+  renderChoiceOptions(refs.librarySortMenu, LIBRARY_SORT_OPTIONS, sortOption.value, "library-sort");
+}
+
+function getPrimaryFontFamily(fontStack = "") {
+  return String(fontStack).split(",")[0]?.trim() || "";
+}
+
+function refreshFontLayoutAfterLoad(fontFamilies) {
+  scheduleUiRefresh();
+
+  if (document.fonts?.load) {
+    const primaryFamilies = [
+      getPrimaryFontFamily(fontFamilies.bodyFamily),
+      getPrimaryFontFamily(fontFamilies.displayFamily),
+      getPrimaryFontFamily(fontFamilies.codeFamily),
+    ].filter(Boolean);
+
+    Promise.all(
+      primaryFamilies.map((family) => document.fonts.load(`500 1em ${family}`)),
+    )
+      .then(() => {
+        scheduleUiRefresh();
+      })
+      .catch(() => {
+        scheduleUiRefresh();
+      });
+  }
+}
+
+function getActiveFontFamilies() {
+  const documentPreset = getDocumentFontStyle(state.fonts.documentStyle);
+  const codePreset = getCodeFontStyle(state.fonts.codeStyle);
+  state.fonts.documentStyle = documentPreset.id;
+  state.fonts.codeStyle = codePreset.id;
+
+  return {
+    documentStyle: documentPreset.id,
+    codeStyle: codePreset.id,
+    bodyFamily: documentPreset.bodyFamily,
+    displayFamily: documentPreset.displayFamily,
+    codeFamily: codePreset.family,
+  };
+}
+
+function applyFontPreferences({ persist = false } = {}) {
+  const fontFamilies = getActiveFontFamilies();
+  document.documentElement.style.setProperty("--font-editor-body", fontFamilies.bodyFamily);
+  document.documentElement.style.setProperty("--font-editor-display", fontFamilies.displayFamily);
+  document.documentElement.style.setProperty("--font-mono", fontFamilies.codeFamily);
+  refreshFontSelectionUi();
+
+  if (persist) {
+    saveDocumentFontStyle(fontFamilies.documentStyle);
+    saveCodeFontStyle(fontFamilies.codeStyle);
+  }
+
+  refreshFontLayoutAfterLoad(fontFamilies);
+}
+
+function applyChoiceMenuValue(menuId, value) {
+  if (menuId === "document-font") {
+    state.fonts.documentStyle = getDocumentFontStyle(value || DEFAULT_DOCUMENT_FONT_STYLE).id;
+    applyFontPreferences({ persist: true });
+    return;
+  }
+
+  if (menuId === "code-font") {
+    state.fonts.codeStyle = getCodeFontStyle(value || DEFAULT_CODE_FONT_STYLE).id;
+    applyFontPreferences({ persist: true });
+    return;
+  }
+
+  if (menuId === "library-sort") {
+    const nextSort =
+      LIBRARY_SORT_OPTIONS.find((option) => option.value === value)?.value || LIBRARY_SORT_OPTIONS[0]?.value || "recent";
+    state.library.sortKey = nextSort;
+    saveLibrarySort(nextSort);
+    renderLibraryView();
+  }
+}
+
+function isChoiceMenuOpen() {
+  return Boolean(state.openChoiceMenu);
+}
+
+function isEditorCurrentlyInteractive() {
+  const activeElement = document.activeElement;
+  return Boolean(
+    (activeElement && (activeElement === refs.editor || refs.editor.contains(activeElement))) ||
+      isRangeInsideEditor(getSelectionRange()),
+  );
+}
+
+function beginExternalControlInteraction(duration = 260) {
+  state.isExternalControlInteracting = true;
+  window.clearTimeout(state.externalControlInteractionTimer);
+  state.externalControlInteractionTimer = window.setTimeout(() => {
+    state.isExternalControlInteracting = false;
+    state.externalControlInteractionTimer = null;
+  }, duration);
+}
+
+function endExternalControlInteraction() {
+  state.isExternalControlInteracting = false;
+  window.clearTimeout(state.externalControlInteractionTimer);
+  state.externalControlInteractionTimer = null;
+}
+
+function releaseEditorInteractionForChoiceMenu() {
+  const range = getSelectionRange();
+
+  if (range && isRangeInsideEditor(range)) {
+    saveSelection();
+  }
+
+  endPointerSelection();
+  hideSelectionBubble();
+  hideBlockHandle();
+  hideInsertMenu();
+  hideImageContextMenu();
+  collapseTransientGaps();
+  clearSpecialSelection();
+
+  const activeElement = document.activeElement;
+
+  if (
+    activeElement &&
+    activeElement !== document.body &&
+    refs.editor.contains(activeElement) &&
+    typeof activeElement.blur === "function"
+  ) {
+    activeElement.blur();
+  }
+
+  const selection = getSelection();
+
+  if (selection?.rangeCount) {
+    const liveRange = selection.getRangeAt(0);
+    if (isRangeInsideEditor(liveRange)) {
+      selection.removeAllRanges();
+    }
+  }
+
+  scheduleUiRefresh();
+}
+
+function prepareChoiceMenuInteraction(event) {
+  beginExternalControlInteraction(900);
+  event.stopPropagation();
+
+  if (!isEditorCurrentlyInteractive()) {
+    return;
+  }
+
+  releaseEditorInteractionForChoiceMenu();
+}
+
 function isCompactLayout() {
   return window.innerWidth <= 1120;
 }
@@ -244,11 +541,7 @@ function clampSidebarWidth(width) {
 }
 
 function persistSidebarWidth(width) {
-  try {
-    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, String(Math.round(width)));
-  } catch (_error) {
-    // Ignore storage failures.
-  }
+  saveSidebarWidth(width);
 }
 
 function applySidebarWidth(width, { persist = false } = {}) {
@@ -270,20 +563,7 @@ function applySidebarWidth(width, { persist = false } = {}) {
 }
 
 function restoreSidebarWidth() {
-  let initialWidth = DEFAULT_SIDEBAR_WIDTH;
-
-  try {
-    const raw = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
-    const parsed = Number.parseFloat(raw || "");
-
-    if (Number.isFinite(parsed)) {
-      initialWidth = parsed;
-    }
-  } catch (_error) {
-    // Ignore storage failures.
-  }
-
-  applySidebarWidth(initialWidth);
+  applySidebarWidth(loadSidebarWidth(DEFAULT_SIDEBAR_WIDTH));
 }
 
 function beginSidebarResize(event) {
@@ -323,6 +603,26 @@ function resetSidebarWidth() {
   applySidebarWidth(DEFAULT_SIDEBAR_WIDTH, { persist: true });
 }
 
+function applyFocusMode(enabled, { persist = true } = {}) {
+  state.isFocusMode = Boolean(enabled);
+  document.body.classList.toggle("focus-mode", state.isFocusMode);
+
+  if (refs.focusModeButton) {
+    refs.focusModeButton.textContent = state.isFocusMode ? "退出专注" : "专注模式";
+    refs.focusModeButton.classList.toggle("is-active", state.isFocusMode);
+  }
+
+  if (persist) {
+    saveFocusMode(state.isFocusMode);
+  }
+
+  scheduleUiRefresh();
+}
+
+function toggleFocusMode() {
+  applyFocusMode(!state.isFocusMode);
+}
+
 function getDocumentOutlineHeadings() {
   return [...refs.editor.querySelectorAll("h1, h2, h3")];
 }
@@ -346,30 +646,7 @@ function getDocumentOutlineItems() {
 }
 
 function decorateDocumentOutlineItems(items) {
-  const counters = [0, 0, 0];
-
-  return items.map((item) => {
-    const level = Math.min(3, Math.max(1, Number(item.level) || 1));
-
-    counters[level - 1] += 1;
-
-    for (let index = level; index < counters.length; index += 1) {
-      counters[index] = 0;
-    }
-
-    for (let index = 0; index < level - 1; index += 1) {
-      if (!counters[index]) {
-        counters[index] = 1;
-      }
-    }
-
-    return {
-      ...item,
-      level,
-      levelLabel: `H${level}`,
-      orderLabel: counters.slice(0, level).join("."),
-    };
-  });
+  return buildOutlineRenderItems(items, state.outline.collapsedIds);
 }
 
 function findActiveOutlineHeadingId(range = getSelectionRange()) {
@@ -407,6 +684,34 @@ function updateDocumentOutlineActiveState(activeId = findActiveOutlineHeadingId(
   });
 }
 
+function syncOutlineCollapseState(nextCollapsedIds) {
+  state.outline.collapsedIds = [...new Set(nextCollapsedIds)];
+  saveCollapsedOutlineIds(state.outline.collapsedIds);
+  renderDocumentOutline();
+}
+
+function toggleOutlineCollapse(outlineId) {
+  syncOutlineCollapseState(toggleCollapsedOutlineId(state.outline.collapsedIds, outlineId));
+}
+
+function updateOutlineCollapseButton(outlineItems) {
+  if (!refs.toggleOutlineCollapseButton) {
+    return;
+  }
+
+  const expandableItems = outlineItems.filter((item) => item.hasChildren);
+
+  if (!expandableItems.length) {
+    refs.toggleOutlineCollapseButton.disabled = true;
+    refs.toggleOutlineCollapseButton.textContent = "没有层级";
+    return;
+  }
+
+  refs.toggleOutlineCollapseButton.disabled = false;
+  const hasCollapsed = expandableItems.some((item) => item.isCollapsed);
+  refs.toggleOutlineCollapseButton.textContent = hasCollapsed ? "展开全部" : "全部折叠";
+}
+
 function renderDocumentOutline() {
   if (!refs.docOutline) {
     return;
@@ -426,20 +731,31 @@ function renderDocumentOutline() {
     return;
   }
 
+  const outlineItems = decorateDocumentOutlineItems(items);
+  const visibleItems = outlineItems.filter((item) => !item.isHidden);
+
   refs.docOutline.className = "outline-list";
-  refs.docOutline.innerHTML = decorateDocumentOutlineItems(items)
+  refs.docOutline.innerHTML = visibleItems
     .map(
-      (item) =>
-        `<button type="button" class="outline-button" data-outline-target="${escapeHtml(item.id)}" data-level="${item.level}">
-          <span class="outline-button-level">${escapeHtml(item.levelLabel)}</span>
-          <span class="outline-button-main">
-            <span class="outline-button-order">${escapeHtml(item.orderLabel)}</span>
-            <span class="outline-button-text">${escapeHtml(item.text)}</span>
-          </span>
-        </button>`,
+      (item) => `
+        <div class="outline-item" data-level="${item.level}">
+          ${
+            item.hasChildren
+              ? `<button type="button" class="outline-toggle" data-outline-toggle="${escapeHtml(item.id)}" aria-label="${item.isCollapsed ? "展开子标题" : "折叠子标题"}">${item.isCollapsed ? "+" : "−"}</button>`
+              : `<span class="outline-toggle-spacer" aria-hidden="true"></span>`
+          }
+          <button type="button" class="outline-button" data-outline-target="${escapeHtml(item.id)}" data-level="${item.level}">
+            <span class="outline-button-level">${escapeHtml(item.levelLabel)}</span>
+            <span class="outline-button-main">
+              <span class="outline-button-order">${escapeHtml(item.orderLabel)}</span>
+              <span class="outline-button-text">${escapeHtml(item.text)}</span>
+            </span>
+          </button>
+        </div>`,
     )
     .join("");
 
+  updateOutlineCollapseButton(outlineItems);
   updateDocumentOutlineActiveState();
 }
 
@@ -782,7 +1098,7 @@ function renderMarkdownInline(markdown, options = {}) {
   html = escapeHtml(html);
   html = html.replace(/\*\*([^*\n]+)\*\*/gu, "<strong>$1</strong>");
   html = html.replace(/__([^_\n]+)__/gu, "<strong>$1</strong>");
-  html = html.replace(/(^|[^\*])\*([^*\n]+)\*(?!\*)/gu, "$1<em>$2</em>");
+  html = html.replace(/(^|[^*])\*([^*\n]+)\*(?!\*)/gu, "$1<em>$2</em>");
   html = html.replace(/(^|[^_])_([^_\n]+)_(?!_)/gu, "$1<em>$2</em>");
   return tokenStore.restore(html);
 }
@@ -1195,26 +1511,13 @@ function buildLibraryTagSummary(documents = state.library.documents) {
 }
 
 function getFilteredLibraryDocuments() {
-  const keyword = normalizeCodeText(state.library.searchText || "").toLocaleLowerCase();
-
-  return state.library.documents.filter((documentItem) => {
-    const tags = normalizeTagList(documentItem.tags);
-    const matchesTag =
-      !state.library.selectedTag ||
-      (state.library.selectedTag === LIBRARY_UNTAGGED_FILTER ? !tags.length : tags.includes(state.library.selectedTag));
-
-    if (!matchesTag) {
-      return false;
-    }
-
-    if (!keyword) {
-      return true;
-    }
-
-    const haystack = [documentItem.title, documentItem.relativePath, tags.join(" ")]
-      .join(" ")
-      .toLocaleLowerCase();
-    return haystack.includes(keyword);
+  return filterAndSortLibraryDocuments({
+    documents: state.library.documents,
+    searchText: state.library.searchText,
+    selectedTag: state.library.selectedTag,
+    untaggedFilter: LIBRARY_UNTAGGED_FILTER,
+    recentDocuments: state.library.recentDocuments,
+    sortKey: state.library.sortKey,
   });
 }
 
@@ -1256,6 +1559,7 @@ function renderLibraryView() {
   const tagSummary = buildLibraryTagSummary();
   const activeTag = state.library.selectedTag;
   const filteredDocuments = getFilteredLibraryDocuments();
+  refreshLibrarySortUi();
 
   refs.libraryTagFilters.className = tagSummary.length ? "tag-filter-list" : "tag-filter-list empty";
   refs.libraryTagFilters.innerHTML = tagSummary.length
@@ -1506,6 +1810,138 @@ function setSelectionTextOffset(root, offset) {
   selection.addRange(range);
 }
 
+function getBookmarkContainer(node) {
+  return getTopLevelNode(node) || refs.editor.lastElementChild || refs.editor;
+}
+
+function getTextOffsetWithinRoot(root, node, offset) {
+  if (!root || !node || !root.contains(node)) {
+    return 0;
+  }
+
+  const range = document.createRange();
+
+  try {
+    range.selectNodeContents(root);
+    range.setEnd(node, offset);
+  } catch (_error) {
+    return 0;
+  }
+
+  return range.toString().length;
+}
+
+function resolveTextOffsetBoundary(root, offset, { preferEnd = false } = {}) {
+  if (!root) {
+    return null;
+  }
+
+  const targetOffset = Math.max(0, offset);
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+  let remaining = targetOffset;
+  let current = walker.nextNode();
+
+  while (current) {
+    const length = current.textContent?.length || 0;
+
+    if (remaining <= length) {
+      return {
+        container: current,
+        offset: remaining,
+      };
+    }
+
+    remaining -= length;
+    current = walker.nextNode();
+  }
+
+  if (root.nodeType === Node.TEXT_NODE) {
+    return {
+      container: root,
+      offset: Math.min(targetOffset, root.textContent?.length || 0),
+    };
+  }
+
+  return {
+    container: root,
+    offset: preferEnd ? root.childNodes.length : 0,
+  };
+}
+
+function buildBookmarkBoundary(node, offset) {
+  if (node === refs.editor && refs.editor.children.length) {
+    const childIndex = Math.min(Math.max(offset > 0 ? offset - 1 : 0, 0), refs.editor.children.length - 1);
+    const block = refs.editor.children[childIndex];
+
+    ensureNodeId(block, block.dataset.kind || block.tagName?.toLowerCase?.() || "block");
+
+    return {
+      blockId: block.dataset.nodeId,
+      textOffset: offset > 0 && childIndex === offset - 1 ? getEditablePlainText(block).length : 0,
+    };
+  }
+
+  const block = getBookmarkContainer(node);
+
+  if (!block || block === refs.editor) {
+    return {
+      blockId: "",
+      textOffset: 0,
+    };
+  }
+
+  ensureNodeId(block, block.dataset.kind || block.tagName?.toLowerCase?.() || "block");
+
+  return {
+    blockId: block.dataset.nodeId,
+    textOffset: getTextOffsetWithinRoot(block, node, offset),
+  };
+}
+
+function applySelectionRange(range) {
+  if (!range) {
+    return false;
+  }
+
+  const selection = getSelection();
+  const focusTarget = nodeToElement(range.startContainer)?.closest(".code-block-editor") || refs.editor;
+  focusTarget.focus();
+  selection.removeAllRanges();
+  selection.addRange(range);
+  return true;
+}
+
+function createRangeFromBookmarkBlocks(bookmark) {
+  if (!bookmark?.startBlockId || !bookmark?.endBlockId) {
+    return null;
+  }
+
+  const startBlock = refs.editor.querySelector(`[data-node-id="${bookmark.startBlockId}"]`);
+  const endBlock = refs.editor.querySelector(`[data-node-id="${bookmark.endBlockId}"]`);
+
+  if (!startBlock || !endBlock) {
+    return null;
+  }
+
+  const startBoundary = resolveTextOffsetBoundary(startBlock, bookmark.startTextOffset);
+  const endBoundary = resolveTextOffsetBoundary(endBlock, bookmark.endTextOffset, { preferEnd: true });
+
+  if (!startBoundary || !endBoundary) {
+    return null;
+  }
+
+  const range = document.createRange();
+
+  try {
+    range.setStart(startBoundary.container, startBoundary.offset);
+    range.setEnd(endBoundary.container, endBoundary.offset);
+  } catch (_error) {
+    return null;
+  }
+
+  return range;
+}
+
 function getNodePath(node, root = refs.editor) {
   const path = [];
   let current = node;
@@ -1545,6 +1981,8 @@ function createSelectionBookmark(range = getSelectionRange()) {
 
   const startPath = getNodePath(range.startContainer);
   const endPath = getNodePath(range.endContainer);
+  const startBoundary = buildBookmarkBoundary(range.startContainer, range.startOffset);
+  const endBoundary = buildBookmarkBoundary(range.endContainer, range.endOffset);
 
   if (!startPath || !endPath) {
     return null;
@@ -1556,6 +1994,10 @@ function createSelectionBookmark(range = getSelectionRange()) {
     startOffset: range.startOffset,
     endPath,
     endOffset: range.endOffset,
+    startBlockId: startBoundary.blockId,
+    startTextOffset: startBoundary.textOffset,
+    endBlockId: endBoundary.blockId,
+    endTextOffset: endBoundary.textOffset,
   };
 }
 
@@ -1568,24 +2010,32 @@ function applySelectionBookmark(bookmark) {
   const endNode = resolveNodePath(bookmark.endPath);
 
   if (!startNode || !endNode) {
-    return false;
+    const fallbackRange = createRangeFromBookmarkBlocks(bookmark);
+    return applySelectionRange(fallbackRange);
   }
 
-  const selection = getSelection();
+  const startBlockId = getBookmarkContainer(startNode)?.dataset?.nodeId || "";
+  const endBlockId = getBookmarkContainer(endNode)?.dataset?.nodeId || "";
+
+  if (
+    (bookmark.startBlockId && startBlockId && bookmark.startBlockId !== startBlockId) ||
+    (bookmark.endBlockId && endBlockId && bookmark.endBlockId !== endBlockId)
+  ) {
+    const fallbackRange = createRangeFromBookmarkBlocks(bookmark);
+    return applySelectionRange(fallbackRange);
+  }
+
   const range = document.createRange();
 
   try {
     range.setStart(startNode, Math.min(bookmark.startOffset, startNode.length ?? startNode.childNodes.length));
     range.setEnd(endNode, Math.min(bookmark.endOffset, endNode.length ?? endNode.childNodes.length));
   } catch (_error) {
-    return false;
+    const fallbackRange = createRangeFromBookmarkBlocks(bookmark);
+    return applySelectionRange(fallbackRange);
   }
 
-  const focusTarget = nodeToElement(range.startContainer)?.closest(".code-block-editor") || refs.editor;
-  focusTarget.focus();
-  selection.removeAllRanges();
-  selection.addRange(range);
-  return true;
+  return applySelectionRange(range);
 }
 
 function createEndSelectionBookmark() {
@@ -2432,8 +2882,9 @@ function normalizeSpecialBlockLayout() {
   });
 
   [...refs.editor.children].forEach((node) => {
+    ensureNodeId(node, node.dataset.kind || node.tagName.toLowerCase());
+
     if (isSpecialBlock(node)) {
-      ensureNodeId(node, node.dataset.kind || "block");
       node.setAttribute("contenteditable", "false");
       node.tabIndex = -1;
     }
@@ -2526,6 +2977,81 @@ function renderCodeBlock(block, desiredCaretOffset = null) {
   }
 }
 
+function clearPendingCodeBlockRender(blockOrEditor) {
+  const block =
+    blockOrEditor?.closest?.(".code-block-node") ||
+    (blockOrEditor?.matches?.(".code-block-node") ? blockOrEditor : null);
+  const nodeId = block?.dataset?.nodeId;
+
+  if (!nodeId) {
+    return;
+  }
+
+  const timerId = state.codeBlockRenderTimers.get(nodeId);
+
+  if (!timerId) {
+    return;
+  }
+
+  window.clearTimeout(timerId);
+  state.codeBlockRenderTimers.delete(nodeId);
+}
+
+function scheduleCodeBlockRender(codeEditor, { immediate = false, desiredCaretOffset = null } = {}) {
+  const block = codeEditor?.closest?.(".code-block-node");
+
+  if (!block || !refs.editor.contains(block)) {
+    return;
+  }
+
+  ensureNodeId(block, "code");
+  clearPendingCodeBlockRender(block);
+
+  const run = () => {
+    state.codeBlockRenderTimers.delete(block.dataset.nodeId);
+
+    if (!refs.editor.contains(block)) {
+      return;
+    }
+
+    const liveEditor = block.querySelector(".code-block-editor");
+    const liveCaretOffset =
+      desiredCaretOffset !== null
+        ? desiredCaretOffset
+        : document.activeElement === liveEditor
+          ? getSelectionTextOffset(liveEditor)
+          : null;
+
+    renderCodeBlock(block, liveCaretOffset);
+
+    if (document.activeElement === liveEditor) {
+      saveSelection();
+    }
+  };
+
+  if (immediate) {
+    run();
+    return;
+  }
+
+  const timerId = window.setTimeout(run, CODE_BLOCK_RENDER_DELAY);
+  state.codeBlockRenderTimers.set(block.dataset.nodeId, timerId);
+}
+
+function setPlainCodeBlockContent(codeEditor, desiredCaretOffset = null) {
+  if (!codeEditor) {
+    return;
+  }
+
+  const rawText = getEditablePlainText(codeEditor);
+  codeEditor.textContent = rawText;
+  codeEditor.classList.add("hljs");
+
+  if (desiredCaretOffset !== null) {
+    setSelectionTextOffset(codeEditor, desiredCaretOffset);
+  }
+}
+
 function setCopyButtonFeedback(button, label, tone = "") {
   if (!button) {
     return;
@@ -2598,13 +3124,14 @@ async function copyPreviewCode(button) {
   await copyAnyCodeText(button, codeElement.textContent || "");
 }
 
-function syncCodeBlockEditor(codeEditor, { history = "schedule" } = {}) {
+function syncCodeBlockEditor(codeEditor, { history = "schedule", immediate = false } = {}) {
   if (!codeEditor) {
     return;
   }
 
   const caretOffset = getSelectionTextOffset(codeEditor);
-  renderCodeBlock(codeEditor.closest(".code-block-node"), caretOffset);
+  setPlainCodeBlockContent(codeEditor, caretOffset);
+  scheduleCodeBlockRender(codeEditor, { immediate, desiredCaretOffset: caretOffset });
   saveSelection();
   queueEditorMutation({ history });
 }
@@ -2631,7 +3158,7 @@ async function finalizeEmbeddedResourceInsertion() {
   queueEditorMutation({ history: "capture" });
 }
 
-function normalizeEditor() {
+function normalizeEditor({ codeRenderMode = "sync" } = {}) {
   migrateLegacyCodeBlocks();
   migrateLegacyVideoEmbeds();
   normalizeInlineLinks();
@@ -2658,7 +3185,12 @@ function normalizeEditor() {
       languageSelect.value = block.dataset.language || "auto";
     }
 
-    renderCodeBlock(block);
+    if (codeRenderMode === "defer" && codeElement) {
+      setPlainCodeBlockContent(codeElement);
+      scheduleCodeBlockRender(codeElement);
+    } else {
+      renderCodeBlock(block);
+    }
   });
 
   if (!refs.editor.innerHTML.trim()) {
@@ -2866,6 +3398,10 @@ async function restoreHistoryEntry(index) {
     return false;
   }
 
+  state.codeBlockRenderTimers.forEach((timerId) => {
+    window.clearTimeout(timerId);
+  });
+  state.codeBlockRenderTimers.clear();
   clearSpecialSelection();
   collapseTransientGaps();
   state.history.isRestoring = true;
@@ -2873,9 +3409,9 @@ async function restoreHistoryEntry(index) {
   const entry = state.history.entries[index];
   entry.html = sanitizeEditorMarkup(entry.html || "<p><br></p>");
   refs.editor.innerHTML = entry.html || "<p><br></p>";
-  normalizeEditor();
+  normalizeEditor({ codeRenderMode: "defer" });
   const titleNode = ensureDocumentTitleHeading(getBlockText(getPrimaryTitleNode()) || state.currentDocument?.title);
-  await refreshEmbeddedResources();
+  scheduleEmbeddedResourceRefresh();
 
   state.history.index = index;
   state.history.isRestoring = false;
@@ -2897,6 +3433,7 @@ async function restoreHistoryEntry(index) {
 }
 
 async function undoHistory() {
+  window.clearTimeout(state.saveTimer);
   flushPendingHistoryCapture();
 
   if (state.history.index <= 0) {
@@ -2909,6 +3446,7 @@ async function undoHistory() {
 }
 
 async function redoHistory() {
+  window.clearTimeout(state.saveTimer);
   flushPendingHistoryCapture();
 
   if (state.history.index >= state.history.entries.length - 1) {
@@ -2925,11 +3463,21 @@ async function saveDocument(reason = "自动保存完成", tone = "success", opt
     return false;
   }
 
-  await refreshDocumentPathFromDisk();
-  await flushDocumentTitleSync();
+  const forceSave = options.force === true;
+  const syncPath = options.syncPath === true;
+  const syncTitle = options.syncTitle === true;
+  const skipCleanup = options.skipCleanup !== false;
+
+  if (syncPath) {
+    await refreshDocumentPathFromDisk();
+  }
+
+  if (syncTitle) {
+    await flushDocumentTitleSync();
+  }
+
   const html = serializeDocument();
   const tags = normalizeTagList(state.currentDocument.tags);
-  const forceSave = options.force === true;
   const tagsChanged = JSON.stringify(tags) !== JSON.stringify(state.lastSavedTags);
 
   if (!forceSave && html === state.lastSavedHtml && !tagsChanged) {
@@ -2940,6 +3488,7 @@ async function saveDocument(reason = "自动保存完成", tone = "success", opt
     filePath: state.currentDocument.filePath,
     html,
     tags,
+    skipCleanup,
   });
 
   state.lastSavedHtml = html;
@@ -2959,12 +3508,21 @@ async function exportCurrentDocumentAsPdf() {
   }
 
   setStatus("正在准备导出 PDF...");
-  await saveDocument("文档已保存", "success", { force: true });
+  await saveDocument("文档已保存", "success", {
+    force: true,
+    syncPath: true,
+    syncTitle: true,
+    skipCleanup: false,
+  });
   const html = serializeDocument();
   const result = await api.exportPdf({
     filePath: state.currentDocument.filePath,
     title: state.currentDocument.title,
     html,
+    fontOptions: {
+      documentStyle: getDocumentFontStyle(state.fonts.documentStyle).id,
+      codeStyle: getCodeFontStyle(state.fonts.codeStyle).id,
+    },
   });
 
   if (result.canceled) {
@@ -2983,12 +3541,12 @@ function scheduleAutosave() {
 
   window.clearTimeout(state.saveTimer);
   state.saveTimer = window.setTimeout(() => {
-    saveDocument().catch((error) => {
+    saveDocument("自动保存完成", "success", { skipCleanup: true }).catch((error) => {
       const message = `自动保存失败：${error.message}`;
       setStatus(message, "error");
       showToast(message, "error", 3200);
     });
-  }, 700);
+  }, AUTOSAVE_DELAY);
 }
 
 async function refreshImageNode(node) {
@@ -3072,6 +3630,26 @@ async function refreshEmbeddedResources() {
   ]);
 }
 
+function scheduleEmbeddedResourceRefresh() {
+  const refreshToken = ++state.resourceRefreshToken;
+  window.clearTimeout(state.resourceRefreshTimer);
+
+  state.resourceRefreshTimer = window.setTimeout(() => {
+    state.resourceRefreshTimer = null;
+    refreshEmbeddedResources()
+      .then(() => {
+        if (refreshToken === state.resourceRefreshToken) {
+          scheduleUiRefresh();
+        }
+      })
+      .catch((error) => {
+        if (refreshToken === state.resourceRefreshToken) {
+          reportError("刷新文档资源失败", error);
+        }
+      });
+  }, 0);
+}
+
 async function loadDocumentLibrary() {
   const result = await api.loadDocumentLibrary();
   state.library.rootPath = result.rootPath || "";
@@ -3081,6 +3659,7 @@ async function loadDocumentLibrary() {
         tags: normalizeTagList(documentItem.tags),
       }))
     : [];
+  state.library.recentDocuments = loadRecentDocuments();
   state.library.untaggedLabel = result.untaggedLabel || "未分类";
 
   const availableTags = new Set(
@@ -3106,7 +3685,7 @@ async function persistCurrentDocumentTags() {
 
   state.currentDocument.tags = normalizeTagList(state.currentDocument.tags);
   renderCurrentDocumentTags();
-  await saveDocument("标签已更新", "success", { force: true, toast: true });
+  await saveDocument("标签已更新", "success", { force: true, toast: true, skipCleanup: true });
   await loadDocumentLibrary();
   return true;
 }
@@ -3136,6 +3715,12 @@ function resetDocumentUi() {
   window.clearTimeout(state.historyTimer);
   window.clearTimeout(state.titleSyncTimer);
   window.cancelAnimationFrame(state.uiFrame);
+  state.codeBlockRenderTimers.forEach((timerId) => {
+    window.clearTimeout(timerId);
+  });
+  state.codeBlockRenderTimers.clear();
+  window.clearTimeout(state.resourceRefreshTimer);
+  state.resourceRefreshToken += 1;
   state.titleSyncPromise = null;
   state.savedSelection = null;
   closeAttachmentPreview();
@@ -3161,6 +3746,7 @@ async function mountDocument(documentPayload, successMessage) {
   ensureDocumentTitleHeading(state.currentDocument.title);
   renderDocumentOutline();
   await refreshEmbeddedResources();
+  state.library.recentDocuments = recordRecentDocument(documentPayload.filePath);
 
   const serializedHtml = serializeDocument();
   const normalizedDocumentChanged = serializedHtml !== rawLoadedHtml;
@@ -3447,6 +4033,15 @@ function toOverlayRect(rect) {
   };
 }
 
+function clampOverlayLeft(left, width, padding = 12) {
+  if (!refs.editorSurface) {
+    return left;
+  }
+
+  const maxLeft = Math.max(padding, refs.editorSurface.clientWidth - width - padding);
+  return Math.min(maxLeft, Math.max(padding, left));
+}
+
 function positionSelectionBubble(range) {
   const viewportRect = range.getBoundingClientRect();
 
@@ -3462,9 +4057,14 @@ function positionSelectionBubble(range) {
     return;
   }
 
-  refs.selectionBubble.style.left = `${Math.round(rect.left + rect.width / 2)}px`;
-  refs.selectionBubble.style.top = `${Math.max(16, Math.round(rect.top - 14))}px`;
   refs.selectionBubble.classList.remove("hidden");
+  const bubbleWidth = refs.selectionBubble.offsetWidth || 360;
+  const bubbleCenter = rect.left + rect.width / 2;
+  const minCenter = bubbleWidth / 2 + 12;
+  const maxCenter = Math.max(minCenter, refs.editorSurface.clientWidth - bubbleWidth / 2 - 12);
+  const clampedCenter = Math.min(maxCenter, Math.max(minCenter, bubbleCenter));
+  refs.selectionBubble.style.left = `${Math.round(clampedCenter)}px`;
+  refs.selectionBubble.style.top = `${Math.max(16, Math.round(rect.top - 14))}px`;
 }
 
 function positionBlockHandle(range) {
@@ -3482,7 +4082,12 @@ function positionBlockHandle(range) {
     return;
   }
 
-  refs.blockHandle.style.left = `${Math.max(12, Math.round(rect.left + rect.width / 2 - BLOCK_HANDLE_WIDTH / 2))}px`;
+  const resolvedLeft = clampOverlayLeft(
+    Math.round(rect.left + rect.width / 2 - BLOCK_HANDLE_WIDTH / 2),
+    BLOCK_HANDLE_WIDTH,
+  );
+  refs.blockHandle.dataset.menuDirection = resolvedLeft < 196 ? "right" : "left";
+  refs.blockHandle.style.left = `${resolvedLeft}px`;
   refs.blockHandle.style.top = `${Math.max(12, Math.round(rect.top - BLOCK_HANDLE_HEIGHT - 8))}px`;
   refs.blockHandle.classList.remove("hidden");
 }
@@ -3515,10 +4120,18 @@ function refreshFloatingControls() {
 }
 
 function rememberSelectionIfNeeded() {
+  if (state.isExternalControlInteracting || isChoiceMenuOpen()) {
+    scheduleUiRefresh();
+    return;
+  }
+
   const range = getSelectionRange();
   const currentGap = nodeToElement(range?.startContainer)?.closest("p.editor-gap");
 
-  collapseTransientGaps(currentGap || null);
+  if (!state.isPointerSelecting) {
+    collapseTransientGaps(currentGap || null);
+  }
+
   syncSelectAllScope();
 
   if (range && isRangeInsideEditor(range)) {
@@ -3674,6 +4287,74 @@ async function openAnchorLink(anchor) {
   }
 
   await api.openExternal(href);
+  return true;
+}
+
+function closeLinkEditor({ restoreFocus = true } = {}) {
+  if (!refs.linkEditorModal) {
+    return;
+  }
+
+  refs.linkEditorModal.classList.add("hidden");
+  refs.linkEditorModal.setAttribute("aria-hidden", "true");
+
+  const anchor = state.linkEditorAnchor;
+  state.linkEditorAnchor = null;
+
+  if (restoreFocus && anchor?.isConnected) {
+    anchor.focus?.();
+  }
+}
+
+function submitLinkEditor(nextValue) {
+  const anchor = state.linkEditorAnchor;
+
+  if (!anchor || !anchor.isConnected) {
+    closeLinkEditor({ restoreFocus: false });
+    return false;
+  }
+
+  const nextHref = normalizeExternalUrl(nextValue);
+
+  if (!nextHref) {
+    unwrapElementPreservingChildren(anchor);
+    saveSelection();
+    queueEditorMutation({ history: "capture" });
+    closeLinkEditor({ restoreFocus: false });
+    showToast("链接已移除", "success", 1600);
+    return true;
+  }
+
+  anchor.setAttribute("href", nextHref);
+  anchor.dataset.href = nextHref;
+  anchor.setAttribute("target", "_blank");
+  anchor.setAttribute("rel", "noopener noreferrer");
+  anchor.setAttribute("title", LINK_OPEN_HINT);
+
+  if (!normalizeCodeText(anchor.textContent).trim()) {
+    anchor.textContent = nextHref;
+  }
+
+  saveSelection();
+  queueEditorMutation({ history: "capture" });
+  closeLinkEditor({ restoreFocus: false });
+  showToast("链接已更新", "success", 1600);
+  return true;
+}
+
+function openLinkEditor(anchor) {
+  if (!anchor || !refs.linkEditorModal || !refs.linkEditorInput) {
+    return false;
+  }
+
+  state.linkEditorAnchor = anchor;
+  refs.linkEditorInput.value = normalizeExternalUrl(anchor.dataset.href || anchor.getAttribute("href"));
+  refs.linkEditorModal.classList.remove("hidden");
+  refs.linkEditorModal.setAttribute("aria-hidden", "false");
+  window.setTimeout(() => {
+    refs.linkEditorInput.focus();
+    refs.linkEditorInput.select();
+  }, 0);
   return true;
 }
 
@@ -4140,7 +4821,13 @@ refs.openDocButton.addEventListener("click", () => {
 });
 
 refs.saveDocButton.addEventListener("click", () => {
-  saveDocument("文档已保存", "success", { force: true, toast: true }).catch((error) => {
+  saveDocument("文档已保存", "success", {
+    force: true,
+    toast: true,
+    syncPath: true,
+    syncTitle: true,
+    skipCleanup: false,
+  }).catch((error) => {
     reportError("保存失败", error);
   });
 });
@@ -4182,6 +4869,13 @@ refs.docTags.addEventListener("click", (event) => {
 });
 
 refs.docOutline.addEventListener("click", (event) => {
+  const toggle = event.target.closest("[data-outline-toggle]");
+
+  if (toggle) {
+    toggleOutlineCollapse(toggle.dataset.outlineToggle || "");
+    return;
+  }
+
   const button = event.target.closest("[data-outline-target]");
 
   if (!button || !state.currentDocument) {
@@ -4189,6 +4883,17 @@ refs.docOutline.addEventListener("click", (event) => {
   }
 
   jumpToOutlineHeading(button.dataset.outlineTarget || "");
+});
+
+refs.toggleOutlineCollapseButton?.addEventListener("click", () => {
+  const outlineItems = decorateDocumentOutlineItems(getDocumentOutlineItems()).filter((item) => item.hasChildren);
+
+  if (!outlineItems.length) {
+    return;
+  }
+
+  const hasCollapsed = outlineItems.some((item) => item.isCollapsed);
+  syncOutlineCollapseState(hasCollapsed ? [] : outlineItems.map((item) => item.id));
 });
 
 refs.sidebarResizer.addEventListener("mousedown", (event) => {
@@ -4229,6 +4934,62 @@ refs.sidebarResizer.addEventListener("keydown", (event) => {
 refs.librarySearchInput.addEventListener("input", (event) => {
   state.library.searchText = event.target.value || "";
   renderLibraryView();
+});
+
+refs.documentFontStyleButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
+refs.codeFontStyleButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
+refs.librarySortButton?.addEventListener("pointerdown", prepareChoiceMenuInteraction);
+
+refs.documentFontStyleButton?.addEventListener("click", () => {
+  toggleChoiceMenu("document-font");
+});
+
+refs.codeFontStyleButton?.addEventListener("click", () => {
+  toggleChoiceMenu("code-font");
+});
+
+refs.librarySortButton?.addEventListener("click", () => {
+  toggleChoiceMenu("library-sort");
+});
+
+refs.documentFontStyleMenu?.addEventListener("click", (event) => {
+  const option = event.target.closest("[data-choice-value]");
+
+  if (!option) {
+    return;
+  }
+
+  applyChoiceMenuValue("document-font", option.dataset.choiceValue || "");
+  closeChoiceMenus();
+  endExternalControlInteraction();
+});
+
+refs.codeFontStyleMenu?.addEventListener("click", (event) => {
+  const option = event.target.closest("[data-choice-value]");
+
+  if (!option) {
+    return;
+  }
+
+  applyChoiceMenuValue("code-font", option.dataset.choiceValue || "");
+  closeChoiceMenus();
+  endExternalControlInteraction();
+});
+
+refs.librarySortMenu?.addEventListener("click", (event) => {
+  const option = event.target.closest("[data-choice-value]");
+
+  if (!option) {
+    return;
+  }
+
+  applyChoiceMenuValue("library-sort", option.dataset.choiceValue || "");
+  closeChoiceMenus();
+  endExternalControlInteraction();
+});
+
+refs.focusModeButton?.addEventListener("click", () => {
+  toggleFocusMode();
 });
 
 refs.libraryTagFilters.addEventListener("click", (event) => {
@@ -4556,7 +5317,7 @@ refs.editor.addEventListener("dblclick", (event) => {
   }
 
   event.preventDefault();
-  editAnchorLink(anchor);
+  openLinkEditor(anchor);
 });
 
 refs.editor.addEventListener("change", (event) => {
@@ -4575,11 +5336,14 @@ refs.editor.addEventListener("change", (event) => {
 
 refs.editor.addEventListener("focusout", (event) => {
   const titleNode = event.target.closest("h1");
+  const codeEditor = event.target.closest(".code-block-editor");
 
   if (titleNode && titleNode === getPrimaryTitleNode()) {
-    flushDocumentTitleSync().catch((error) => {
-      reportError("标题同步失败", error);
-    });
+    scheduleDocumentTitleSync();
+  }
+
+  if (codeEditor) {
+    scheduleCodeBlockRender(codeEditor);
   }
 });
 
@@ -4625,6 +5389,25 @@ refs.attachmentPreviewModal.addEventListener("click", (event) => {
   });
 });
 
+refs.linkEditorForm?.addEventListener("submit", (event) => {
+  event.preventDefault();
+  submitLinkEditor(refs.linkEditorInput.value);
+});
+
+refs.linkEditorCancel?.addEventListener("click", () => {
+  closeLinkEditor();
+});
+
+refs.linkEditorRemove?.addEventListener("click", () => {
+  submitLinkEditor("");
+});
+
+refs.linkEditorModal?.addEventListener("click", (event) => {
+  if (event.target.closest("[data-link-editor-close]")) {
+    closeLinkEditor();
+  }
+});
+
 refs.imageContextMenu.addEventListener("click", (event) => {
   const button = event.target.closest("[data-image-menu-action]");
 
@@ -4658,12 +5441,22 @@ refs.imageContextMenu.addEventListener("click", (event) => {
 });
 
 document.addEventListener("mousedown", (event) => {
+  if (isChoiceMenuTarget(event.target)) {
+    beginExternalControlInteraction(900);
+  } else {
+    closeChoiceMenus();
+  }
+
   if (!event.target.closest("#blockHandle")) {
     hideInsertMenu();
   }
 
   if (!event.target.closest("#imageContextMenu")) {
     hideImageContextMenu();
+  }
+
+  if (isChoiceMenuTarget(event.target)) {
+    return;
   }
 
   if (!event.target.closest(".editor-gap, #blockHandle, #selectionBubble")) {
@@ -4682,6 +5475,10 @@ document.addEventListener("mousedown", (event) => {
 document.addEventListener("mouseup", () => {
   endSidebarResize();
   endPointerSelection();
+
+  if (!isChoiceMenuOpen()) {
+    endExternalControlInteraction();
+  }
 });
 
 document.addEventListener("mousemove", (event) => {
@@ -4691,6 +5488,7 @@ document.addEventListener("mousemove", (event) => {
 window.addEventListener("resize", () => {
   applySidebarWidth(state.sidebarWidth);
   endSidebarResize();
+  closeChoiceMenus();
   hideImageContextMenu();
   scheduleUiRefresh();
 });
@@ -4715,9 +5513,15 @@ window.addEventListener("focus", () => {
 
 window.addEventListener("blur", () => {
   endSidebarResize();
+  closeChoiceMenus();
 });
 
 document.addEventListener("keydown", (event) => {
+  if (refs.linkEditorModal && event.key === "Escape" && !refs.linkEditorModal.classList.contains("hidden")) {
+    closeLinkEditor();
+    return;
+  }
+
   if (event.key === "Escape" && !refs.imageContextMenu.classList.contains("hidden")) {
     hideImageContextMenu();
     return;
@@ -4725,6 +5529,12 @@ document.addEventListener("keydown", (event) => {
 
   if (event.key === "Escape" && !refs.attachmentPreviewModal.classList.contains("hidden")) {
     closeAttachmentPreview();
+    return;
+  }
+
+  if (event.key === "Escape" && isChoiceMenuOpen()) {
+    closeChoiceMenus();
+    endExternalControlInteraction();
     return;
   }
 
@@ -4747,9 +5557,21 @@ document.addEventListener("keydown", (event) => {
 
   if (withModifier && key === "s") {
     event.preventDefault();
-    saveDocument("文档已保存", "success", { force: true, toast: true }).catch((error) => {
+    saveDocument("文档已保存", "success", {
+      force: true,
+      toast: true,
+      syncPath: true,
+      syncTitle: true,
+      skipCleanup: false,
+    }).catch((error) => {
       reportError("保存失败", error);
     });
+    return;
+  }
+
+  if (withModifier && event.shiftKey && key === "f") {
+    event.preventDefault();
+    toggleFocusMode();
     return;
   }
 
@@ -4771,6 +5593,8 @@ document.addEventListener("keydown", (event) => {
 
 updateAvailability();
 restoreSidebarWidth();
+applyFocusMode(state.isFocusMode, { persist: false });
+applyFontPreferences({ persist: false });
 renderCurrentDocumentTags();
 renderDocumentOutline();
 renderLibraryView();

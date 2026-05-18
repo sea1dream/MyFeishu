@@ -1,14 +1,6 @@
 const { clipboard, contextBridge, ipcRenderer, shell } = require("electron");
 const hljs = require("highlight.js");
-
-function escapeHtml(value) {
-  return value
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+const { highlightCode } = require("./shared/highlight-code");
 
 contextBridge.exposeInMainWorld("flowDocApi", {
   createDocument: () => ipcRenderer.invoke("document:new"),
@@ -33,42 +25,5 @@ contextBridge.exposeInMainWorld("flowDocApi", {
     return true;
   },
   openExternal: (url) => shell.openExternal(String(url || "")),
-  highlightCode: ({ code, language }) => {
-    const rawCode = typeof code === "string" ? code : "";
-    const mode = language || "auto";
-
-    if (!rawCode) {
-      return {
-        html: "",
-        detectedLanguage: mode === "auto" ? "plaintext" : mode,
-      };
-    }
-
-    if (mode === "plaintext") {
-      return {
-        html: escapeHtml(rawCode),
-        detectedLanguage: "plaintext",
-      };
-    }
-
-    try {
-      if (mode === "auto") {
-        const result = hljs.highlightAuto(rawCode);
-        return {
-          html: result.value,
-          detectedLanguage: result.language || "plaintext",
-        };
-      }
-
-      return {
-        html: hljs.highlight(rawCode, { language: mode, ignoreIllegals: true }).value,
-        detectedLanguage: mode,
-      };
-    } catch (_error) {
-      return {
-        html: escapeHtml(rawCode),
-        detectedLanguage: "plaintext",
-      };
-    }
-  },
+  highlightCode: ({ code, language }) => highlightCode({ code, language, hljs }),
 });

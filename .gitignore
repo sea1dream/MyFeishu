@@ -3,3 +3,4 @@ attachments/
 node_modules/
 release/
 tmp-electron-test/
+migration-backups/

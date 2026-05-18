@@ -27,6 +27,58 @@
 
         <div class="sidebar-card">
           <div class="sidebar-card-head">
+            <h2>文档排版</h2>
+          </div>
+          <div class="font-control-list">
+            <div class="sidebar-field">
+              <span>正文与标题</span>
+              <div class="choice-menu">
+                <button
+                  id="documentFontStyleButton"
+                  class="choice-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-controls="documentFontStyleMenu"
+                >
+                  <span class="choice-trigger-label">选择字体样式</span>
+                </button>
+                <div
+                  id="documentFontStyleMenu"
+                  class="choice-popover hidden"
+                  role="listbox"
+                  aria-label="选择正文与标题字体样式"
+                ></div>
+              </div>
+            </div>
+
+            <div class="sidebar-field">
+              <span>代码块与行内代码</span>
+              <div class="choice-menu">
+                <button
+                  id="codeFontStyleButton"
+                  class="choice-trigger"
+                  type="button"
+                  aria-haspopup="listbox"
+                  aria-expanded="false"
+                  aria-controls="codeFontStyleMenu"
+                >
+                  <span class="choice-trigger-label">选择代码字体</span>
+                </button>
+                <div
+                  id="codeFontStyleMenu"
+                  class="choice-popover hidden"
+                  role="listbox"
+                  aria-label="选择代码字体样式"
+                ></div>
+              </div>
+            </div>
+          </div>
+          <p>代码字体会继续保留连字；不同字体对 <code>1 / I / l</code> 的区分度也会不一样。</p>
+        </div>
+
+        <div class="sidebar-card">
+          <div class="sidebar-card-head">
             <h2>当前标签</h2>
           </div>
           <div id="docTags" class="tag-list empty">打开文档后可以为它添加标签</div>
@@ -39,6 +91,7 @@
         <div class="sidebar-card outline-card">
           <div class="sidebar-card-head">
             <h2>文档目录</h2>
+            <button id="toggleOutlineCollapseButton" type="button">全部折叠</button>
           </div>
           <div id="docOutline" class="outline-list empty">打开文档后会根据标题自动生成目录</div>
         </div>
@@ -49,7 +102,22 @@
             <button id="refreshLibraryButton" type="button">刷新</button>
           </div>
           <p id="libraryRootPath" class="library-root-path">正在读取文档库...</p>
-          <input id="librarySearchInput" type="text" placeholder="按标题、路径或标签搜索" />
+          <div class="library-toolbar">
+            <input id="librarySearchInput" type="text" placeholder="按标题、路径或标签搜索" />
+            <div class="choice-menu">
+              <button
+                id="librarySortButton"
+                class="choice-trigger"
+                type="button"
+                aria-haspopup="listbox"
+                aria-expanded="false"
+                aria-controls="librarySortMenu"
+              >
+                <span class="choice-trigger-label">最近打开</span>
+              </button>
+              <div id="librarySortMenu" class="choice-popover hidden" role="listbox" aria-label="文档排序方式"></div>
+            </div>
+          </div>
           <div id="libraryTagFilters" class="tag-filter-list"></div>
           <div id="libraryDocList" class="library-doc-list"></div>
         </div>
@@ -57,6 +125,7 @@
         <div class="sidebar-card muted">
           <h2>快捷键</h2>
           <p><kbd>Ctrl</kbd> + <kbd>S</kbd> 立即保存</p>
+          <p><kbd>Ctrl</kbd> + <kbd>Shift</kbd> + <kbd>F</kbd> 切换专注模式</p>
           <p>导出 PDF 会保留代码高亮，并将附件导出为图标卡片。</p>
           <p>代码块支持语言切换和高亮渲染。</p>
         </div>
@@ -73,14 +142,20 @@
 
       <main class="workspace">
         <header class="topbar">
-          <div class="document-meta">
-            <div class="eyebrow">当前文档</div>
-            <div id="docName" class="document-name">未打开文档</div>
-            <div id="docPath" class="document-path">请先新建或打开文档</div>
+          <div class="topbar-head">
+            <div class="document-meta">
+              <div class="eyebrow">当前文档</div>
+              <div id="docName" class="document-name">未打开文档</div>
+              <div id="docPath" class="document-path">请先新建或打开文档</div>
+            </div>
+
+            <div class="topbar-actions">
+              <button id="focusModeButton" type="button">专注模式</button>
+            </div>
           </div>
 
           <div class="tip-banner">
-            选中文本会弹出格式菜单；点击段落左侧的“+”可以插入图片、附件和代码块。
+            选中文本会弹出格式菜单；点击段落左侧的 “+” 可以插入图片、附件和代码块。
           </div>
         </header>
 
@@ -88,7 +163,7 @@
           <div id="emptyState" class="empty-state">
             <div class="empty-card">
               <h2>先选择文档位置，再开始编辑</h2>
-              <p>文档可以放在任意位置，图片和附件会统一保存到程序目录下的资源文件夹中。</p>
+              <p>文档可以放在任意位置，图片和附件会统一保存在程序目录下的资源文件夹中。</p>
             </div>
           </div>
 
@@ -188,6 +263,43 @@
         </header>
 
         <div id="attachmentPreviewBody" class="preview-modal-body"></div>
+      </section>
+    </div>
+
+    <div id="linkEditorModal" class="preview-modal hidden" aria-hidden="true">
+      <div class="preview-modal-backdrop" data-link-editor-close></div>
+      <section
+        class="preview-modal-dialog link-editor-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="linkEditorTitle"
+      >
+        <header class="preview-modal-head">
+          <div class="preview-modal-copy">
+            <div class="preview-modal-eyebrow">链接编辑</div>
+            <h2 id="linkEditorTitle">更新链接地址</h2>
+            <p class="preview-modal-meta">留空可以直接移除链接，Ctrl/Cmd + 点击仍然可以快速打开。</p>
+          </div>
+        </header>
+
+        <form id="linkEditorForm" class="link-editor-form">
+          <label class="modal-field">
+            <span>链接地址</span>
+            <input
+              id="linkEditorInput"
+              type="url"
+              placeholder="https://example.com"
+              autocomplete="off"
+              spellcheck="false"
+            />
+          </label>
+
+          <div class="preview-modal-actions">
+            <button id="linkEditorRemove" type="button">移除链接</button>
+            <button id="linkEditorCancel" type="button">取消</button>
+            <button id="linkEditorSubmit" type="submit">保存链接</button>
+          </div>
+        </form>
       </section>
     </div>
 

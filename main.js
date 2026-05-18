@@ -1,11 +1,24 @@
 const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
 const fs = require("node:fs");
+const fsp = fs.promises;
 const os = require("node:os");
 const path = require("node:path");
 const { pathToFileURL } = require("node:url");
+const {
+  DOC_EXTENSION,
+  PDF_EXTENSION,
+  ensureDocumentExtension: sharedEnsureDocumentExtension,
+  ensurePdfExtension: sharedEnsurePdfExtension,
+  getDocumentTitleFromPath: sharedGetDocumentTitleFromPath,
+  migrateDocumentPayload,
+  normalizeDocumentTags: sharedNormalizeDocumentTags,
+  normalizeDocumentTitle: sharedNormalizeDocumentTitle,
+  serializeDocumentPayload,
+} = require("./shared/document-format");
+const { buildPdfExportHtml: buildPdfExportHtmlTemplate } = require("./main-modules/pdf-export-template");
+const ensureDocumentExtension = sharedEnsureDocumentExtension;
+const ensurePdfExtension = sharedEnsurePdfExtension;
 
-const DOC_EXTENSION = ".flowdoc";
-const PDF_EXTENSION = ".pdf";
 const DOC_FILTERS = [{ name: "FlowDoc 文档", extensions: [DOC_EXTENSION.slice(1)] }];
 const APP_ID = "com.flowdoc.editor";
 const DOCUMENT_LIBRARY_FOLDER_NAME = "本地文档";
@@ -19,6 +32,60 @@ const HIGHLIGHT_THEME_PATH = path.join(
   "atom-one-dark-reasonable.min.css",
 );
 const PDF_EXPORT_PRELOAD_PATH = path.join(__dirname, "pdf-export-preload.js");
+const LOCAL_FONTS_ROOT = path.join(__dirname, "assets", "fonts");
+const LOCAL_FONT_FACES = [
+  { family: "Google Sans Code", directory: "google-sans-code", fileName: "GoogleSansCode-Regular.ttf", fontWeight: 400 },
+  { family: "Google Sans Code", directory: "google-sans-code", fileName: "GoogleSansCode-Medium.ttf", fontWeight: 500 },
+  { family: "Google Sans Code", directory: "google-sans-code", fileName: "GoogleSansCode-Bold.ttf", fontWeight: 700 },
+  { family: "Atkinson Hyperlegible Next", directory: "atkinson-hyperlegible-next", fileName: "AtkinsonHyperlegibleNext-Regular.ttf", fontWeight: 400 },
+  { family: "Atkinson Hyperlegible Next", directory: "atkinson-hyperlegible-next", fileName: "AtkinsonHyperlegibleNext-Medium.ttf", fontWeight: 500 },
+  { family: "Atkinson Hyperlegible Next", directory: "atkinson-hyperlegible-next", fileName: "AtkinsonHyperlegibleNext-Bold.ttf", fontWeight: 700 },
+  { family: "IBM Plex Sans", directory: "ibm-plex-sans", fileName: "IBMPlexSans-Regular.ttf", fontWeight: 400 },
+  { family: "IBM Plex Sans", directory: "ibm-plex-sans", fileName: "IBMPlexSans-Medium.ttf", fontWeight: 500 },
+  { family: "IBM Plex Sans", directory: "ibm-plex-sans", fileName: "IBMPlexSans-Bold.ttf", fontWeight: 700 },
+  { family: "Source Sans 3", directory: "source-sans-3", fileName: "SourceSans3-Regular.ttf", fontWeight: 400 },
+  { family: "Source Sans 3", directory: "source-sans-3", fileName: "SourceSans3-Medium.ttf", fontWeight: 500 },
+  { family: "Source Sans 3", directory: "source-sans-3", fileName: "SourceSans3-Bold.ttf", fontWeight: 700 },
+  { family: "JetBrains Mono", directory: "jetbrains-mono", fileName: "JetBrainsMono-Regular.ttf", fontWeight: 400 },
+  { family: "JetBrains Mono", directory: "jetbrains-mono", fileName: "JetBrainsMono-Medium.ttf", fontWeight: 500 },
+  { family: "JetBrains Mono", directory: "jetbrains-mono", fileName: "JetBrainsMono-Bold.ttf", fontWeight: 700 },
+  { family: "Fira Code", directory: "fira-code", fileName: "FiraCode-Regular.ttf", fontWeight: 400 },
+  { family: "Fira Code", directory: "fira-code", fileName: "FiraCode-Medium.ttf", fontWeight: 500 },
+  { family: "Fira Code", directory: "fira-code", fileName: "FiraCode-Bold.ttf", fontWeight: 700 },
+];
+const PDF_DOCUMENT_FONT_STYLES = {
+  atkinson: {
+    bodyFamily:
+      '"Atkinson Hyperlegible Next", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+    displayFamily:
+      '"Atkinson Hyperlegible Next", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+  },
+  plex: {
+    bodyFamily: '"IBM Plex Sans", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+    displayFamily:
+      '"IBM Plex Sans", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+  },
+  source: {
+    bodyFamily: '"Source Sans 3", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+    displayFamily:
+      '"Source Sans 3", "Segoe UI", "Segoe UI Variable", "PingFang SC", "Microsoft YaHei UI", sans-serif',
+  },
+  "google-sans-code": {
+    bodyFamily: '"Google Sans Code", "Cascadia Mono", "Consolas", monospace',
+    displayFamily: '"Google Sans Code", "Cascadia Mono", "Consolas", monospace',
+  },
+};
+const PDF_CODE_FONT_STYLES = {
+  "google-sans-code": {
+    codeFamily: '"Google Sans Code", "Cascadia Code", "Consolas", monospace',
+  },
+  "jetbrains-mono": {
+    codeFamily: '"JetBrains Mono", "Cascadia Code", "Consolas", monospace',
+  },
+  "fira-code": {
+    codeFamily: '"Fira Code", "JetBrains Mono", "Cascadia Code", "Consolas", monospace',
+  },
+};
 const IMAGE_PREVIEW_EXTENSIONS = new Set([".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp", ".svg"]);
 const MARKDOWN_PREVIEW_EXTENSIONS = new Set([".md", ".markdown"]);
 const PDF_PREVIEW_EXTENSIONS = new Set([".pdf"]);
@@ -96,14 +163,23 @@ function getLegacyStorageRoots() {
   return [...new Set([__dirname])];
 }
 
-function ensureGlobalAssetDirectories() {
-  Object.values(getAssetDirectories()).forEach((directory) => {
-    fs.mkdirSync(directory, { recursive: true });
-  });
+async function pathExists(targetPath) {
+  try {
+    await fsp.access(targetPath);
+    return true;
+  } catch (_error) {
+    return false;
+  }
 }
 
-function ensureDocumentLibraryRoot() {
-  fs.mkdirSync(getDocumentLibraryRoot(), { recursive: true });
+async function ensureGlobalAssetDirectories() {
+  await Promise.all(
+    Object.values(getAssetDirectories()).map((directory) => fsp.mkdir(directory, { recursive: true })),
+  );
+}
+
+async function ensureDocumentLibraryRoot() {
+  await fsp.mkdir(getDocumentLibraryRoot(), { recursive: true });
 }
 
 function createWindow() {
@@ -126,10 +202,10 @@ function createWindow() {
   window.loadFile(path.join(__dirname, "index.html"));
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setAppUserModelId(APP_ID);
-  ensureGlobalAssetDirectories();
-  ensureDocumentLibraryRoot();
+  await ensureGlobalAssetDirectories();
+  await ensureDocumentLibraryRoot();
   createWindow();
 
   app.on("activate", () => {
@@ -144,14 +220,6 @@ app.on("window-all-closed", () => {
     app.quit();
   }
 });
-
-function ensureDocumentExtension(filePath) {
-  return path.extname(filePath) ? filePath : `${filePath}${DOC_EXTENSION}`;
-}
-
-function ensurePdfExtension(filePath) {
-  return path.extname(filePath).toLowerCase() === PDF_EXTENSION ? filePath : `${filePath}${PDF_EXTENSION}`;
-}
 
 function getDocumentTitleFromPath(filePath) {
   return path.basename(filePath, path.extname(filePath)) || "未命名文档";
@@ -399,6 +467,7 @@ function cleanupRemovedAttachments(filePath, previousHtml, nextHtml) {
 
     try {
       fs.unlinkSync(resolved.absolutePath);
+      pruneEmptyResourceDirectories(getAssetDirectory("attachments"), path.dirname(resolved.absolutePath));
       cleaned.push(resourcePath);
     } catch (_error) {
       // Ignore cleanup errors so the document save itself still succeeds.
@@ -471,6 +540,7 @@ function cleanupOrphanedAttachments(currentFilePath) {
 
     try {
       fs.unlinkSync(absolutePath);
+      pruneEmptyResourceDirectories(attachmentDirectory, path.dirname(absolutePath));
       cleaned.push(relativePath);
     } catch (_error) {
       // Ignore cleanup errors so document save still succeeds.
@@ -608,18 +678,67 @@ function getAssetDirectory(folderName) {
   return directory;
 }
 
+function getDocumentAttachmentFolderName(documentPath) {
+  return normalizeDocumentTitle(getDocumentTitleFromPath(documentPath || ""));
+}
+
+function getResourceTargetDirectory(folderName, documentPath = "") {
+  const assetDirectory = getAssetDirectory(folderName);
+
+  if (folderName !== "attachments") {
+    return assetDirectory;
+  }
+
+  const documentFolderName = getDocumentAttachmentFolderName(documentPath);
+  const targetDirectory = path.join(assetDirectory, documentFolderName);
+  fs.mkdirSync(targetDirectory, { recursive: true });
+  return targetDirectory;
+}
+
 function buildStoredResourcePath(folderName, fileName) {
   return `${folderName}/${fileName}`;
 }
 
-function copyFileIntoLibrary(folderName, sourceFilePath) {
+function buildStoredResourcePathFromAbsolute(folderName, rootDirectory, absolutePath) {
+  return buildStoredResourcePath(folderName, path.relative(rootDirectory, absolutePath).split(path.sep).join("/"));
+}
+
+function pruneEmptyResourceDirectories(rootDirectory, startingDirectory) {
+  let currentDirectory = path.resolve(startingDirectory || "");
+  const resolvedRoot = path.resolve(rootDirectory);
+
+  while (currentDirectory.startsWith(resolvedRoot) && currentDirectory !== resolvedRoot) {
+    let entries = [];
+
+    try {
+      entries = fs.readdirSync(currentDirectory);
+    } catch (_error) {
+      break;
+    }
+
+    if (entries.length > 0) {
+      break;
+    }
+
+    try {
+      fs.rmdirSync(currentDirectory);
+    } catch (_error) {
+      break;
+    }
+
+    currentDirectory = path.dirname(currentDirectory);
+  }
+}
+
+function copyFileIntoLibrary(folderName, sourceFilePath, options = {}) {
   const assetDirectory = getAssetDirectory(folderName);
-  const targetPath = getUniqueTargetPath(assetDirectory, path.basename(sourceFilePath));
+  const targetDirectory = getResourceTargetDirectory(folderName, options.documentPath);
+  const targetPath = getUniqueTargetPath(targetDirectory, path.basename(sourceFilePath));
   fs.copyFileSync(sourceFilePath, targetPath);
 
   return {
     name: path.basename(targetPath),
-    relativePath: buildStoredResourcePath(folderName, path.basename(targetPath)),
+    relativePath: buildStoredResourcePathFromAbsolute(folderName, assetDirectory, targetPath),
   };
 }
 
@@ -1563,6 +1682,695 @@ function previewAttachment(documentPath, resourcePath) {
   };
 }
 
+async function getPdfHighlightThemeCssAsync() {
+  try {
+    return await fsp.readFile(HIGHLIGHT_THEME_PATH, "utf8");
+  } catch (_error) {
+    return "";
+  }
+}
+
+function buildPdfFontFaceCss() {
+  return LOCAL_FONT_FACES.map(({ family, directory, fileName, fontWeight }) => {
+    const fontUrl = pathToFileURL(path.join(LOCAL_FONTS_ROOT, directory, fileName)).href;
+
+    return `
+      @font-face {
+        font-family: "${family}";
+        src: url("${fontUrl}") format("truetype");
+        font-style: normal;
+        font-weight: ${fontWeight};
+        font-display: swap;
+      }
+    `;
+  }).join("\n");
+}
+
+function resolvePdfFontFamilies(fontOptions = {}) {
+  const documentStyle = PDF_DOCUMENT_FONT_STYLES[fontOptions.documentStyle] || PDF_DOCUMENT_FONT_STYLES.atkinson;
+  const codeStyle = PDF_CODE_FONT_STYLES[fontOptions.codeStyle] || PDF_CODE_FONT_STYLES["google-sans-code"];
+
+  return {
+    bodyFamily: documentStyle.bodyFamily,
+    displayFamily: documentStyle.displayFamily,
+    codeFamily: codeStyle.codeFamily,
+  };
+}
+
+async function readDocumentAsync(filePath) {
+  const raw = await fsp.readFile(filePath, "utf8");
+  const data = migrateDocumentPayload(JSON.parse(raw));
+
+  if (!data || typeof data.html !== "string") {
+    throw new Error("文档格式不正确，缺少 html 内容。");
+  }
+
+  return {
+    filePath,
+    title: sharedGetDocumentTitleFromPath(filePath),
+    html: data.html,
+    tags: sharedNormalizeDocumentTags(data.tags),
+    version: data.version || 1,
+    createdAt: data.createdAt || null,
+    updatedAt: data.updatedAt || null,
+  };
+}
+
+async function writeDocumentAsync(filePath, html, options = {}) {
+  const existingPayload =
+    options.existing && typeof options.existing === "object"
+      ? options.existing
+      : await (async () => {
+          if (!(await pathExists(filePath))) {
+            return null;
+          }
+
+          try {
+            return await readDocumentAsync(filePath);
+          } catch (_error) {
+            return null;
+          }
+        })();
+  const preservedTags = options.tags === undefined ? existingPayload?.tags || [] : [];
+  const payload = serializeDocumentPayload(html, {
+    existing: existingPayload,
+    tags: options.tags ?? preservedTags,
+  });
+
+  await fsp.mkdir(path.dirname(filePath), { recursive: true });
+  await fsp.writeFile(filePath, JSON.stringify(payload, null, 2), "utf8");
+  return payload;
+}
+
+async function listFilesRecursivelyAsync(rootDirectory) {
+  if (!(await pathExists(rootDirectory))) {
+    return [];
+  }
+
+  const results = [];
+  const pending = [rootDirectory];
+
+  while (pending.length) {
+    const currentDirectory = pending.pop();
+    const entries = await fsp.readdir(currentDirectory, { withFileTypes: true });
+
+    entries.forEach((entry) => {
+      const fullPath = path.join(currentDirectory, entry.name);
+
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+        return;
+      }
+
+      if (entry.isFile()) {
+        results.push(fullPath);
+      }
+    });
+  }
+
+  return results;
+}
+
+async function listFlowDocFilesAsync(rootDirectory) {
+  if (!(await pathExists(rootDirectory))) {
+    return [];
+  }
+
+  const results = [];
+  const pending = [rootDirectory];
+
+  while (pending.length) {
+    const currentDirectory = pending.pop();
+    const entries = await fsp.readdir(currentDirectory, { withFileTypes: true });
+
+    entries.forEach((entry) => {
+      const fullPath = path.join(currentDirectory, entry.name);
+
+      if (entry.isDirectory()) {
+        pending.push(fullPath);
+        return;
+      }
+
+      if (entry.isFile() && path.extname(entry.name).toLowerCase() === DOC_EXTENSION) {
+        results.push(fullPath);
+      }
+    });
+  }
+
+  return results;
+}
+
+async function listReferenceDocumentsAsync(currentFilePath) {
+  const filePaths = await Promise.all(
+    getAttachmentReferenceRoots(currentFilePath).map((rootDirectory) => listFlowDocFilesAsync(rootDirectory)),
+  );
+
+  return [...new Set(filePaths.flat().map((filePath) => path.resolve(filePath)))];
+}
+
+async function resolveResourceAsync(documentPath, resourcePath) {
+  let absolutePath;
+
+  if (path.isAbsolute(resourcePath)) {
+    absolutePath = resourcePath;
+  } else {
+    const storageCandidates = resolveFromKnownRoots(resourcePath);
+    const legacyDocumentLocalPath = path.resolve(path.dirname(documentPath || getStorageRoot()), resourcePath);
+    let existingStorageCandidate = null;
+
+    for (const candidate of storageCandidates) {
+      if (await pathExists(candidate)) {
+        existingStorageCandidate = candidate;
+        break;
+      }
+    }
+
+    absolutePath =
+      existingStorageCandidate ||
+      ((await pathExists(legacyDocumentLocalPath)) ? legacyDocumentLocalPath : null) ||
+      storageCandidates[0] ||
+      legacyDocumentLocalPath;
+  }
+
+  const exists = absolutePath ? await pathExists(absolutePath) : false;
+
+  return {
+    exists,
+    absolutePath,
+    name: absolutePath ? path.basename(absolutePath) : "",
+    fileUrl: exists ? pathToFileURL(absolutePath).href : null,
+  };
+}
+
+async function buildPdfResourceMapAsync(documentPath, html) {
+  const resources = {};
+
+  for (const resourcePath of extractPdfResourcePathsFromHtml(html)) {
+    const resolved = await resolveResourceAsync(documentPath, resourcePath);
+    resources[resourcePath] = {
+      exists: resolved.exists,
+      fileUrl: resolved.fileUrl || "",
+      name: resolved.name || "",
+    };
+  }
+
+  return resources;
+}
+
+async function isAttachmentReferencedByAnyDocumentAsync(resourcePath, currentFilePath) {
+  const targetPath = normalizeStoredAttachmentPath(resourcePath);
+
+  if (!targetPath) {
+    return false;
+  }
+
+  const referenceDocuments = await listReferenceDocumentsAsync(currentFilePath);
+
+  for (const filePath of referenceDocuments) {
+    try {
+      const document = await readDocumentAsync(filePath);
+
+      if (extractAttachmentPathsFromHtml(document.html).has(targetPath)) {
+        return true;
+      }
+    } catch (_error) {
+      // Ignore broken documents while cleaning attachments.
+    }
+  }
+
+  return false;
+}
+
+async function cleanupRemovedAttachmentsAsync(filePath, previousHtml, nextHtml) {
+  const previousPaths = extractAttachmentPathsFromHtml(previousHtml);
+  const nextPaths = extractAttachmentPathsFromHtml(nextHtml);
+  const removedPaths = [...previousPaths].filter((resourcePath) => !nextPaths.has(resourcePath));
+  const cleaned = [];
+
+  for (const resourcePath of removedPaths) {
+    if (await isAttachmentReferencedByAnyDocumentAsync(resourcePath, filePath)) {
+      continue;
+    }
+
+    const resolved = await resolveResourceAsync(filePath, resourcePath);
+
+    if (!resolved.exists) {
+      continue;
+    }
+
+    try {
+      await fsp.unlink(resolved.absolutePath);
+      await pruneEmptyResourceDirectoriesAsync(
+        path.join(getStorageRoot(), "attachments"),
+        path.dirname(resolved.absolutePath),
+      );
+      cleaned.push(resourcePath);
+    } catch (_error) {
+      // Ignore cleanup errors so the document save itself still succeeds.
+    }
+  }
+
+  return cleaned;
+}
+
+async function getReferencedAttachmentPathsAsync(currentFilePath) {
+  const references = new Set();
+  const referenceDocuments = await listReferenceDocumentsAsync(currentFilePath);
+
+  for (const filePath of referenceDocuments) {
+    try {
+      const document = await readDocumentAsync(filePath);
+      extractAttachmentPathsFromHtml(document.html).forEach((resourcePath) => {
+        references.add(resourcePath);
+      });
+    } catch (_error) {
+      // Ignore broken documents during cleanup.
+    }
+  }
+
+  return references;
+}
+
+async function cleanupOrphanedAttachmentsAsync(currentFilePath) {
+  const attachmentDirectory = path.join(getStorageRoot(), "attachments");
+  const referencedPaths = await getReferencedAttachmentPathsAsync(currentFilePath);
+  const cleaned = [];
+
+  await fsp.mkdir(attachmentDirectory, { recursive: true });
+
+  const files = await listFilesRecursivelyAsync(attachmentDirectory);
+
+  for (const absolutePath of files) {
+    const relativePath = buildStoredResourcePath(
+      "attachments",
+      path.relative(attachmentDirectory, absolutePath).split(path.sep).join("/"),
+    );
+
+    if (referencedPaths.has(relativePath)) {
+      continue;
+    }
+
+    try {
+      await fsp.unlink(absolutePath);
+      await pruneEmptyResourceDirectoriesAsync(attachmentDirectory, path.dirname(absolutePath));
+      cleaned.push(relativePath);
+    } catch (_error) {
+      // Ignore cleanup errors so document save still succeeds.
+    }
+  }
+
+  return cleaned;
+}
+
+async function findMovedDocumentPathAsync(filePath, htmlSnapshot) {
+  if (!htmlSnapshot) {
+    return null;
+  }
+
+  const directory = path.dirname(filePath);
+
+  if (!(await pathExists(directory))) {
+    return null;
+  }
+
+  const entries = await fsp.readdir(directory, { withFileTypes: true });
+  const candidates = entries
+    .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === DOC_EXTENSION)
+    .map((entry) => path.join(directory, entry.name))
+    .filter((candidatePath) => path.resolve(candidatePath) !== path.resolve(filePath));
+
+  const matches = [];
+
+  for (const candidatePath of candidates) {
+    try {
+      const candidate = await readDocumentAsync(candidatePath);
+
+      if (candidate.html === htmlSnapshot) {
+        matches.push(candidatePath);
+      }
+    } catch (_error) {
+      // Ignore unreadable documents while searching for moves.
+    }
+  }
+
+  return matches.length === 1 ? matches[0] : null;
+}
+
+async function indexDocumentLibraryAsync() {
+  const rootPath = getDocumentLibraryRoot();
+  await ensureDocumentLibraryRoot();
+  const documentPaths = await listFlowDocFilesAsync(rootPath);
+  const documents = (
+    await Promise.all(
+      documentPaths.map(async (filePath) => {
+        try {
+          const document = await readDocumentAsync(filePath);
+          const relativePath = path.relative(rootPath, filePath).split(path.sep).join("/");
+
+          return {
+            filePath,
+            relativePath,
+            title: document.title,
+            tags: document.tags,
+            updatedAt: document.updatedAt,
+          };
+        } catch (_error) {
+          return null;
+        }
+      }),
+    )
+  )
+    .filter(Boolean)
+    .sort(compareLibraryDocuments);
+
+  return {
+    rootPath,
+    untaggedLabel: LIBRARY_UNTAGGED_LABEL,
+    documents,
+  };
+}
+
+async function getUniqueTargetPathAsync(directory, desiredName) {
+  const { name, extension } = splitBaseName(desiredName);
+  let counter = 0;
+  let candidate = path.join(directory, desiredName);
+
+  while (await pathExists(candidate)) {
+    counter += 1;
+    candidate = path.join(directory, `${name}-${counter}${extension}`);
+  }
+
+  return candidate;
+}
+
+async function getAssetDirectoryAsync(folderName) {
+  const directory = getAssetDirectories()[folderName];
+
+  if (!directory) {
+    throw new Error("不支持的资源目录。");
+  }
+
+  await fsp.mkdir(directory, { recursive: true });
+  return directory;
+}
+
+async function getResourceTargetDirectoryAsync(folderName, documentPath = "") {
+  const assetDirectory = await getAssetDirectoryAsync(folderName);
+
+  if (folderName !== "attachments") {
+    return assetDirectory;
+  }
+
+  const documentFolderName = getDocumentAttachmentFolderName(documentPath);
+  const targetDirectory = path.join(assetDirectory, documentFolderName);
+  await fsp.mkdir(targetDirectory, { recursive: true });
+  return targetDirectory;
+}
+
+async function pruneEmptyResourceDirectoriesAsync(rootDirectory, startingDirectory) {
+  let currentDirectory = path.resolve(startingDirectory || "");
+  const resolvedRoot = path.resolve(rootDirectory);
+
+  while (currentDirectory.startsWith(resolvedRoot) && currentDirectory !== resolvedRoot) {
+    let entries = [];
+
+    try {
+      entries = await fsp.readdir(currentDirectory);
+    } catch (_error) {
+      break;
+    }
+
+    if (entries.length > 0) {
+      break;
+    }
+
+    try {
+      await fsp.rmdir(currentDirectory);
+    } catch (_error) {
+      break;
+    }
+
+    currentDirectory = path.dirname(currentDirectory);
+  }
+}
+
+async function copyFileIntoLibraryAsync(folderName, sourceFilePath, options = {}) {
+  const assetDirectory = await getAssetDirectoryAsync(folderName);
+  const targetDirectory = await getResourceTargetDirectoryAsync(folderName, options.documentPath);
+  const targetPath = await getUniqueTargetPathAsync(targetDirectory, path.basename(sourceFilePath));
+  await fsp.copyFile(sourceFilePath, targetPath);
+
+  return {
+    name: path.basename(targetPath),
+    relativePath: buildStoredResourcePathFromAbsolute(folderName, assetDirectory, targetPath),
+  };
+}
+
+async function saveClipboardImageAsync(dataUrl, suggestedName) {
+  const assetDirectory = await getAssetDirectoryAsync("images");
+  const { mimeType, buffer } = parseDataUrl(dataUrl);
+  const extension = path.extname(suggestedName) || mimeTypeToExtension(mimeType);
+  const baseName = path.basename(suggestedName, path.extname(suggestedName)) || "pasted-image";
+  const targetPath = await getUniqueTargetPathAsync(assetDirectory, `${baseName}${extension}`);
+
+  await fsp.writeFile(targetPath, buffer);
+
+  return {
+    name: path.basename(targetPath),
+    relativePath: buildStoredResourcePath("images", path.basename(targetPath)),
+  };
+}
+
+async function removeDirectoryIfExistsAsync(directoryPath) {
+  if (!directoryPath || !(await pathExists(directoryPath))) {
+    return;
+  }
+
+  await fsp.rm(directoryPath, { recursive: true, force: true });
+}
+
+async function exportDocumentAsPdfAsync(browserWindow, payload) {
+  const filePath = sharedEnsureDocumentExtension(payload.filePath);
+  const defaultPdfPath = sharedEnsurePdfExtension(
+    path.join(
+      path.dirname(filePath),
+      sharedNormalizeDocumentTitle(payload.title || sharedGetDocumentTitleFromPath(filePath)),
+    ),
+  );
+  const selection = await dialog.showSaveDialog(browserWindow, {
+    title: "导出 PDF",
+    defaultPath: defaultPdfPath,
+    filters: [{ name: "PDF 文件", extensions: [PDF_EXTENSION.slice(1)] }],
+  });
+
+  if (selection.canceled || !selection.filePath) {
+    return { canceled: true };
+  }
+
+  const exportPath = sharedEnsurePdfExtension(selection.filePath);
+  const tempDirectory = await fsp.mkdtemp(path.join(os.tmpdir(), "flowdoc-export-"));
+  const tempHtmlPath = path.join(tempDirectory, "export.html");
+  const exportWindow = new BrowserWindow({
+    show: false,
+    width: 1280,
+    height: 960,
+    backgroundColor: "#ffffff",
+    webPreferences: {
+      preload: PDF_EXPORT_PRELOAD_PATH,
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: false,
+      spellcheck: false,
+    },
+  });
+
+  try {
+    const exportHtml = buildPdfExportHtmlTemplate({
+      title: payload.title || sharedGetDocumentTitleFromPath(filePath),
+      html: payload.html,
+      resources: await buildPdfResourceMapAsync(filePath, payload.html),
+      highlightThemeCss: await getPdfHighlightThemeCssAsync(),
+      fontFaceCss: buildPdfFontFaceCss(),
+      fontFamilies: resolvePdfFontFamilies(payload.fontOptions),
+    });
+
+    await fsp.writeFile(tempHtmlPath, exportHtml, "utf8");
+    await exportWindow.loadFile(tempHtmlPath);
+    await exportWindow.webContents.executeJavaScript(
+      `
+        if (typeof window.__waitForExportReady !== "function") {
+          throw new Error("PDF export page failed to initialize.");
+        }
+
+        window.__waitForExportReady();
+      `,
+      true,
+    );
+    const pdfBuffer = await exportWindow.webContents.printToPDF({
+      printBackground: true,
+      preferCSSPageSize: true,
+      pageSize: "A4",
+    });
+    await fsp.writeFile(exportPath, pdfBuffer);
+
+    return {
+      canceled: false,
+      savedPath: exportPath,
+      fileName: path.basename(exportPath),
+    };
+  } finally {
+    if (!exportWindow.isDestroyed()) {
+      exportWindow.destroy();
+    }
+
+    await removeDirectoryIfExistsAsync(tempDirectory);
+  }
+}
+
+async function copyAttachmentToDownloadsAsync(documentPath, resourcePath) {
+  const resolved = await resolveResourceAsync(documentPath, resourcePath);
+
+  if (!resolved.exists) {
+    throw new Error("附件文件不存在，无法复制到 Downloads。");
+  }
+
+  const downloadsDirectory = path.join(os.homedir(), "Downloads");
+  await fsp.mkdir(downloadsDirectory, { recursive: true });
+
+  const targetPath = await getUniqueTargetPathAsync(downloadsDirectory, path.basename(resolved.absolutePath));
+  await fsp.copyFile(resolved.absolutePath, targetPath);
+
+  return {
+    savedPath: targetPath,
+    fileName: path.basename(targetPath),
+  };
+}
+
+async function saveResourceAsAsync(browserWindow, documentPath, resourcePath, options = {}) {
+  const resolved = await resolveResourceAsync(documentPath, resourcePath);
+
+  if (!resolved.exists) {
+    throw new Error("资源文件不存在，无法另存。");
+  }
+
+  const defaultDirectory = app.getPath(options.defaultDirectoryKey || "pictures");
+  const result = await dialog.showSaveDialog(browserWindow, {
+    title: options.title || "资源另存为",
+    defaultPath: path.join(defaultDirectory, path.basename(resolved.absolutePath)),
+  });
+
+  if (result.canceled || !result.filePath) {
+    return { canceled: true };
+  }
+
+  await fsp.mkdir(path.dirname(result.filePath), { recursive: true });
+  await fsp.copyFile(resolved.absolutePath, result.filePath);
+
+  return {
+    canceled: false,
+    savedPath: result.filePath,
+    fileName: path.basename(result.filePath),
+  };
+}
+
+async function openResourceWithSystemAsync(documentPath, resourcePath) {
+  const resolved = await resolveResourceAsync(documentPath, resourcePath);
+
+  if (!resolved.exists) {
+    throw new Error("资源文件不存在，无法打开。");
+  }
+
+  const errorMessage = await shell.openPath(resolved.absolutePath);
+
+  if (errorMessage) {
+    throw new Error(errorMessage);
+  }
+
+  return {
+    success: true,
+    openedPath: resolved.absolutePath,
+  };
+}
+
+async function revealResourceInFolderAsync(documentPath, resourcePath) {
+  const resolved = await resolveResourceAsync(documentPath, resourcePath);
+
+  if (!resolved.exists) {
+    throw new Error("资源文件不存在，无法在资源管理器中显示。");
+  }
+
+  shell.showItemInFolder(resolved.absolutePath);
+
+  return {
+    success: true,
+    absolutePath: resolved.absolutePath,
+  };
+}
+
+async function readTextPreviewAsync(filePath, limit = ATTACHMENT_PREVIEW_LIMIT) {
+  const fileHandle = await fsp.open(filePath, "r");
+
+  try {
+    const stat = await fileHandle.stat();
+    const targetSize = Math.min(stat.size, limit);
+    const buffer = Buffer.alloc(targetSize);
+    await fileHandle.read(buffer, 0, targetSize, 0);
+
+    return {
+      content: buffer.toString("utf8"),
+      truncated: stat.size > limit,
+      size: stat.size,
+    };
+  } finally {
+    await fileHandle.close();
+  }
+}
+
+async function previewAttachmentAsync(documentPath, resourcePath) {
+  const resolved = await resolveResourceAsync(documentPath, resourcePath);
+  const previewKind = getAttachmentPreviewKind(resolved.absolutePath);
+
+  if (!resolved.exists) {
+    return {
+      exists: false,
+      previewable: false,
+      previewKind,
+      name: resolved.name,
+      absolutePath: resolved.absolutePath,
+      fileUrl: null,
+      size: 0,
+    };
+  }
+
+  const stat = await fsp.stat(resolved.absolutePath);
+
+  if (previewKind === "text" || previewKind === "markdown") {
+    const textPreview = await readTextPreviewAsync(resolved.absolutePath);
+
+    return {
+      exists: true,
+      previewable: true,
+      previewKind,
+      name: resolved.name,
+      absolutePath: resolved.absolutePath,
+      fileUrl: resolved.fileUrl,
+      size: textPreview.size,
+      content: textPreview.content,
+      truncated: textPreview.truncated,
+    };
+  }
+
+  return {
+    exists: true,
+    previewable: previewKind !== "unsupported",
+    previewKind,
+    name: resolved.name,
+    absolutePath: resolved.absolutePath,
+    fileUrl: resolved.fileUrl,
+    size: stat.size,
+  };
+}
+
 async function askDocumentPathForCreate(browserWindow) {
   const result = await dialog.showSaveDialog(browserWindow, {
     title: "选择新文档的位置",
@@ -1576,7 +2384,7 @@ async function askDocumentPathForCreate(browserWindow) {
 
   const filePath = ensureDocumentExtension(result.filePath);
 
-  if (fs.existsSync(filePath)) {
+  if (await pathExists(filePath)) {
     const overwriteResult = await dialog.showMessageBox(browserWindow, {
       type: "warning",
       buttons: ["覆盖", "取消"],
@@ -1604,7 +2412,7 @@ ipcMain.handle("document:new", async (event) => {
   }
 
   const html = getDefaultHtml(selection.filePath);
-  writeDocument(selection.filePath, html, { tags: [] });
+  await writeDocumentAsync(selection.filePath, html, { tags: [] });
 
   return {
     canceled: false,
@@ -1630,7 +2438,7 @@ ipcMain.handle("document:open", async (event) => {
     return { canceled: true };
   }
 
-  const document = readDocument(result.filePaths[0]);
+  const document = await readDocumentAsync(result.filePaths[0]);
   return { canceled: false, document };
 });
 
@@ -1639,7 +2447,7 @@ ipcMain.handle("document:open-path", async (_event, payload) => {
     throw new Error("打开文档失败：缺少文档路径。");
   }
 
-  return readDocument(ensureDocumentExtension(payload.filePath));
+  return readDocumentAsync(sharedEnsureDocumentExtension(payload.filePath));
 });
 
 ipcMain.handle("document:save", async (_event, payload) => {
@@ -1647,24 +2455,27 @@ ipcMain.handle("document:save", async (_event, payload) => {
     throw new Error("保存失败：缺少文档路径或内容。");
   }
 
-  const filePath = ensureDocumentExtension(payload.filePath);
+  const filePath = sharedEnsureDocumentExtension(payload.filePath);
+  const skipCleanup = payload.skipCleanup === true;
   const previousHtml =
-    fs.existsSync(filePath)
-      ? (() => {
+    skipCleanup || !(await pathExists(filePath))
+      ? ""
+      : await (async () => {
           try {
-            return readDocument(filePath).html;
+            return (await readDocumentAsync(filePath)).html;
           } catch (_error) {
             return "";
           }
-        })()
-      : "";
-  const saved = writeDocument(filePath, payload.html, { tags: payload.tags });
-  const cleanedAttachments = [
-    ...new Set([
-      ...cleanupRemovedAttachments(filePath, previousHtml, payload.html),
-      ...cleanupOrphanedAttachments(filePath),
-    ]),
-  ];
+        })();
+  const saved = await writeDocumentAsync(filePath, payload.html, { tags: payload.tags });
+  const cleanedAttachments = skipCleanup
+    ? []
+    : [
+        ...new Set([
+          ...(await cleanupRemovedAttachmentsAsync(filePath, previousHtml, payload.html)),
+          ...(await cleanupOrphanedAttachmentsAsync(filePath)),
+        ]),
+      ];
   return { success: true, updatedAt: saved.updatedAt, cleanedAttachments };
 });
 
@@ -1674,7 +2485,7 @@ ipcMain.handle("document:export-pdf", async (event, payload) => {
   }
 
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
-  return exportDocumentAsPdf(browserWindow, payload);
+  return exportDocumentAsPdfAsync(browserWindow, payload);
 });
 
 ipcMain.handle("document:refresh-path", async (_event, payload) => {
@@ -1682,9 +2493,9 @@ ipcMain.handle("document:refresh-path", async (_event, payload) => {
     throw new Error("同步文档路径失败：缺少文档路径。");
   }
 
-  const currentPath = ensureDocumentExtension(payload.filePath);
+  const currentPath = sharedEnsureDocumentExtension(payload.filePath);
 
-  if (fs.existsSync(currentPath)) {
+  if (await pathExists(currentPath)) {
     return {
       exists: true,
       changed: false,
@@ -1693,7 +2504,7 @@ ipcMain.handle("document:refresh-path", async (_event, payload) => {
     };
   }
 
-  const movedPath = findMovedDocumentPath(currentPath, payload.lastSavedHtml);
+  const movedPath = await findMovedDocumentPathAsync(currentPath, payload.lastSavedHtml);
 
   if (!movedPath) {
     return {
@@ -1724,11 +2535,11 @@ ipcMain.handle("document:rename", async (_event, payload) => {
   const samePath = path.resolve(currentPath) === path.resolve(desiredPath);
 
   if (!samePath) {
-    const targetPath = fs.existsSync(desiredPath)
-      ? getUniqueTargetPath(path.dirname(currentPath), `${nextTitle}${extension}`)
+    const targetPath = (await pathExists(desiredPath))
+      ? await getUniqueTargetPathAsync(path.dirname(currentPath), `${nextTitle}${extension}`)
       : desiredPath;
 
-    fs.renameSync(currentPath, targetPath);
+    await fsp.rename(currentPath, targetPath);
 
     return {
       success: true,
@@ -1768,7 +2579,7 @@ ipcMain.handle("resource:insert-images", async (event, payload) => {
 
   return {
     canceled: false,
-    files: result.filePaths.map((sourcePath) => copyFileIntoLibrary("images", sourcePath)),
+    files: await Promise.all(result.filePaths.map((sourcePath) => copyFileIntoLibraryAsync("images", sourcePath))),
   };
 });
 
@@ -1790,7 +2601,13 @@ ipcMain.handle("resource:insert-attachments", async (event, payload) => {
 
   return {
     canceled: false,
-    files: result.filePaths.map((sourcePath) => copyFileIntoLibrary("attachments", sourcePath)),
+    files: await Promise.all(
+      result.filePaths.map((sourcePath) =>
+        copyFileIntoLibraryAsync("attachments", sourcePath, {
+          documentPath: payload.docPath,
+        }),
+      ),
+    ),
   };
 });
 
@@ -1799,7 +2616,7 @@ ipcMain.handle("resource:save-pasted-image", async (_event, payload) => {
     throw new Error("无法保存剪贴板图片：缺少文档路径或图片数据。");
   }
 
-  return saveClipboardImage(
+  return saveClipboardImageAsync(
     payload.dataUrl,
     payload.suggestedName || `pasted-image-${Date.now()}.png`,
   );
@@ -1810,7 +2627,7 @@ ipcMain.handle("resource:resolve", async (_event, payload) => {
     throw new Error("无法解析资源路径。");
   }
 
-  return resolveResource(payload.docPath, payload.relativePath);
+  return resolveResourceAsync(payload.docPath, payload.relativePath);
 });
 
 ipcMain.handle("resource:save-image-as", async (event, payload) => {
@@ -1819,7 +2636,7 @@ ipcMain.handle("resource:save-image-as", async (event, payload) => {
   }
 
   const browserWindow = BrowserWindow.fromWebContents(event.sender);
-  return saveResourceAs(browserWindow, payload.docPath, payload.relativePath, {
+  return saveResourceAsAsync(browserWindow, payload.docPath, payload.relativePath, {
     title: "图片另存为",
     defaultDirectoryKey: "pictures",
   });
@@ -1830,7 +2647,7 @@ ipcMain.handle("resource:open-image", async (_event, payload) => {
     throw new Error("无法打开图片：缺少文档路径或图片路径。");
   }
 
-  return openResourceWithSystem(payload.docPath, payload.relativePath);
+  return openResourceWithSystemAsync(payload.docPath, payload.relativePath);
 });
 
 ipcMain.handle("resource:reveal-image-in-folder", async (_event, payload) => {
@@ -1838,7 +2655,7 @@ ipcMain.handle("resource:reveal-image-in-folder", async (_event, payload) => {
     throw new Error("无法定位图片：缺少文档路径或图片路径。");
   }
 
-  return revealResourceInFolder(payload.docPath, payload.relativePath);
+  return revealResourceInFolderAsync(payload.docPath, payload.relativePath);
 });
 
 ipcMain.handle("resource:download-attachment", async (_event, payload) => {
@@ -1846,7 +2663,7 @@ ipcMain.handle("resource:download-attachment", async (_event, payload) => {
     throw new Error("无法下载附件：缺少文档路径或资源路径。");
   }
 
-  return copyAttachmentToDownloads(payload.docPath, payload.relativePath);
+  return copyAttachmentToDownloadsAsync(payload.docPath, payload.relativePath);
 });
 
 ipcMain.handle("resource:preview-attachment", async (_event, payload) => {
@@ -1854,9 +2671,9 @@ ipcMain.handle("resource:preview-attachment", async (_event, payload) => {
     throw new Error("无法预览附件：缺少文档路径或资源路径。");
   }
 
-  return previewAttachment(payload.docPath, payload.relativePath);
+  return previewAttachmentAsync(payload.docPath, payload.relativePath);
 });
 
 ipcMain.handle("library:index", async () => {
-  return indexDocumentLibrary();
+  return indexDocumentLibraryAsync();
 });
