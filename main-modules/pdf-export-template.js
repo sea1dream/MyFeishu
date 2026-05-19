@@ -189,6 +189,78 @@ function buildPdfExportStyles(highlightThemeCss = "", fontFaceCss = "", fontFami
       border: 1px solid rgba(72, 48, 31, 0.14);
     }
 
+    .attachment-export-art {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      width: 100%;
+      height: 100%;
+      padding: 10px;
+      border-radius: 16px;
+      background: linear-gradient(160deg, #f7efe6, #efe4d6);
+    }
+
+    .attachment-export-art img {
+      display: block;
+      width: 100%;
+      height: 100%;
+      max-width: 30px;
+      max-height: 30px;
+      object-fit: contain;
+    }
+
+    .attachment-export-art--pdf { background: linear-gradient(160deg, rgba(229, 83, 75, 0.16), rgba(160, 44, 37, 0.1)); }
+    .attachment-export-art--document { background: linear-gradient(160deg, rgba(63, 121, 211, 0.16), rgba(40, 82, 160, 0.1)); }
+    .attachment-export-art--docx { background: linear-gradient(160deg, rgba(63, 121, 211, 0.16), rgba(40, 82, 160, 0.1)); }
+    .attachment-export-art--sheet { background: linear-gradient(160deg, rgba(47, 165, 101, 0.16), rgba(31, 111, 69, 0.1)); }
+    .attachment-export-art--xlsx,
+    .attachment-export-art--csv { background: linear-gradient(160deg, rgba(47, 165, 101, 0.16), rgba(31, 111, 69, 0.1)); }
+    .attachment-export-art--slides { background: linear-gradient(160deg, rgba(240, 138, 52, 0.16), rgba(200, 99, 25, 0.1)); }
+    .attachment-export-art--pptx { background: linear-gradient(160deg, rgba(240, 138, 52, 0.16), rgba(200, 99, 25, 0.1)); }
+    .attachment-export-art--archive { background: linear-gradient(160deg, rgba(138, 104, 216, 0.16), rgba(93, 60, 169, 0.1)); }
+    .attachment-export-art--python { background: linear-gradient(160deg, rgba(75, 125, 184, 0.16), rgba(208, 169, 64, 0.12)); }
+    .attachment-export-art--javascript,
+    .attachment-export-art--typescript,
+    .attachment-export-art--java,
+    .attachment-export-art--go,
+    .attachment-export-art--rust,
+    .attachment-export-art--php,
+    .attachment-export-art--ruby,
+    .attachment-export-art--kotlin,
+    .attachment-export-art--swift,
+    .attachment-export-art--scala,
+    .attachment-export-art--dart,
+    .attachment-export-art--lua,
+    .attachment-export-art--perl,
+    .attachment-export-art--powershell,
+    .attachment-export-art--shell,
+    .attachment-export-art--sql,
+    .attachment-export-art--html,
+    .attachment-export-art--css,
+    .attachment-export-art--json,
+    .attachment-export-art--xml,
+    .attachment-export-art--yaml,
+    .attachment-export-art--asm,
+    .attachment-export-art--markdown,
+    .attachment-export-art--text,
+    .attachment-export-art--data,
+    .attachment-export-art--code,
+    .attachment-export-art--generic { background: linear-gradient(160deg, rgba(93, 118, 200, 0.14), rgba(57, 79, 148, 0.08)); }
+    .attachment-export-art--image { background: linear-gradient(160deg, rgba(50, 166, 166, 0.16), rgba(31, 110, 116, 0.1)); }
+    .attachment-export-art--png,
+    .attachment-export-art--jpg { background: linear-gradient(160deg, rgba(50, 166, 166, 0.16), rgba(31, 110, 116, 0.1)); }
+    .attachment-export-art--video { background: linear-gradient(160deg, rgba(201, 90, 178, 0.16), rgba(138, 59, 122, 0.1)); }
+    .attachment-export-art--mp4 { background: linear-gradient(160deg, rgba(201, 90, 178, 0.16), rgba(138, 59, 122, 0.1)); }
+    .attachment-export-art--audio { background: linear-gradient(160deg, rgba(239, 124, 88, 0.16), rgba(189, 81, 48, 0.1)); }
+    .attachment-export-art--mp3 { background: linear-gradient(160deg, rgba(239, 124, 88, 0.16), rgba(189, 81, 48, 0.1)); }
+    .attachment-export-art--executable { background: linear-gradient(160deg, rgba(112, 92, 77, 0.16), rgba(55, 44, 37, 0.1)); }
+    .attachment-export-art--c,
+    .attachment-export-art--cpp,
+    .attachment-export-art--elf,
+    .attachment-export-art--sharedlib,
+    .attachment-export-art--ida,
+    .attachment-export-art--object { background: linear-gradient(160deg, rgba(96, 113, 201, 0.16), rgba(57, 79, 148, 0.1)); }
+
     .attachment-export-badge {
       position: relative;
       display: grid;
@@ -347,11 +419,12 @@ function buildPdfExportStyles(highlightThemeCss = "", fontFaceCss = "", fontFami
   `;
 }
 
-function buildPdfExportHtml({ title, html, resources, highlightThemeCss, fontFaceCss = "", fontFamilies = {} }) {
+function buildPdfExportHtml({ title, html, resources, iconAssets = {}, highlightThemeCss, fontFaceCss = "", fontFamilies = {} }) {
   const exportPayload = JSON.stringify({
     title: normalizeDocumentTitle(title),
     html: String(html || ""),
     resources: resources || {},
+    iconAssets: iconAssets || {},
   })
     .replaceAll("&", "\\u0026")
     .replaceAll("<", "\\u003c")
@@ -438,81 +511,231 @@ function buildPdfExportHtml({ title, html, resources, highlightThemeCss, fontFac
         const executableExtensions = new Set([".exe", ".msi", ".bat", ".cmd", ".ps1", ".apk", ".appimage"]);
         const dataExtensions = new Set([".json", ".yaml", ".yml", ".toml", ".xml", ".ini", ".cfg"]);
         const pythonExtensions = new Set([".py", ".pyw", ".ipynb"]);
+        const cExtensions = new Set([".c"]);
+        const cppExtensions = new Set([".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"]);
+        const javascriptExtensions = new Set([".js", ".jsx", ".cjs", ".mjs"]);
+        const typescriptExtensions = new Set([".ts", ".tsx"]);
+        const htmlExtensions = new Set([".html", ".htm"]);
+        const cssExtensions = new Set([".css"]);
+        const jsonExtensions = new Set([".json"]);
+        const xmlExtensions = new Set([".xml"]);
+        const yamlExtensions = new Set([".yaml", ".yml"]);
+        const javaExtensions = new Set([".java"]);
+        const shellExtensions = new Set([".sh"]);
+        const sqlExtensions = new Set([".sql"]);
+        const goExtensions = new Set([".go"]);
+        const rustExtensions = new Set([".rs"]);
+        const phpExtensions = new Set([".php"]);
+        const rubyExtensions = new Set([".rb"]);
+        const kotlinExtensions = new Set([".kt"]);
+        const swiftExtensions = new Set([".swift"]);
+        const scalaExtensions = new Set([".scala"]);
+        const dartExtensions = new Set([".dart"]);
+        const luaExtensions = new Set([".lua"]);
+        const perlExtensions = new Set([".pl"]);
+        const powershellExtensions = new Set([".ps1"]);
+        const csvExtensions = new Set([".csv", ".tsv"]);
+        const pngExtensions = new Set([".png", ".webp", ".gif", ".bmp"]);
+        const jpgExtensions = new Set([".jpg", ".jpeg", ".svg"]);
+        const mp3Extensions = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac"]);
+        const mp4Extensions = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
+        const elfExtensions = new Set([".elf", ".out", ".bin"]);
+        const sharedLibraryExtensions = new Set([".so", ".dll", ".dylib"]);
+        const idaExtensions = new Set([".i64", ".idb"]);
+        const objectExtensions = new Set([".o", ".a", ".lib"]);
+        const asmExtensions = new Set([".asm", ".s"]);
         const codeExtensions = new Set([
-          ".js",
-          ".jsx",
-          ".ts",
-          ".tsx",
-          ".cjs",
-          ".mjs",
-          ".css",
-          ".html",
-          ".htm",
-          ".java",
-          ".go",
-          ".rs",
-          ".php",
-          ".sh",
-          ".sql",
-          ".c",
-          ".cpp",
-          ".h",
+          ".toml",
+          ".ini",
+          ".cfg",
         ]);
 
         if (pdfExtensions.has(extension)) {
-          return { category: "pdf", glyph: "A", label: "PDF" };
+          return { category: "pdf", label: "PDF", iconKey: "pdf" };
         }
 
         if (pythonExtensions.has(extension)) {
-          return { category: "python", glyph: "Py", label: "PY" };
+          return { category: "python", label: "PY", iconKey: "python" };
+        }
+
+        if (javascriptExtensions.has(extension)) {
+          return { category: "javascript", label: upperExtension.slice(0, 4), iconKey: "javascript" };
+        }
+
+        if (typescriptExtensions.has(extension)) {
+          return { category: "typescript", label: upperExtension.slice(0, 4), iconKey: "typescript" };
+        }
+
+        if (cExtensions.has(extension)) {
+          return { category: "c", label: "C", iconKey: "c" };
+        }
+
+        if (cppExtensions.has(extension)) {
+          return { category: "cpp", label: "C++", iconKey: "cpp" };
+        }
+
+        if (javaExtensions.has(extension)) {
+          return { category: "java", label: "JAVA", iconKey: "java" };
+        }
+
+        if (goExtensions.has(extension)) {
+          return { category: "go", label: "GO", iconKey: "go" };
+        }
+
+        if (rustExtensions.has(extension)) {
+          return { category: "rust", label: "RS", iconKey: "rust" };
+        }
+
+        if (phpExtensions.has(extension)) {
+          return { category: "php", label: "PHP", iconKey: "php" };
+        }
+
+        if (rubyExtensions.has(extension)) {
+          return { category: "ruby", label: "RB", iconKey: "ruby" };
+        }
+
+        if (kotlinExtensions.has(extension)) {
+          return { category: "kotlin", label: "KT", iconKey: "kotlin" };
+        }
+
+        if (swiftExtensions.has(extension)) {
+          return { category: "swift", label: "SWFT", iconKey: "swift" };
+        }
+
+        if (scalaExtensions.has(extension)) {
+          return { category: "scala", label: "SCA", iconKey: "scala" };
+        }
+
+        if (dartExtensions.has(extension)) {
+          return { category: "dart", label: "DART", iconKey: "dart" };
+        }
+
+        if (luaExtensions.has(extension)) {
+          return { category: "lua", label: "LUA", iconKey: "lua" };
+        }
+
+        if (perlExtensions.has(extension)) {
+          return { category: "perl", label: "PL", iconKey: "perl" };
+        }
+
+        if (powershellExtensions.has(extension)) {
+          return { category: "powershell", label: "PS1", iconKey: "powershell" };
         }
 
         if (markdownExtensions.has(extension)) {
-          return { category: "markdown", glyph: "#", label: "MD" };
+          return { category: "markdown", label: "MD", iconKey: "markdown" };
         }
 
-        if (textExtensions.has(extension)) {
-          return { category: "text", glyph: "T", label: "TXT" };
+        if (htmlExtensions.has(extension)) {
+          return { category: "html", label: "HTML", iconKey: "html" };
         }
 
-        if (documentExtensions.has(extension)) {
-          return { category: "document", glyph: "W", label: "DOC" };
+        if (cssExtensions.has(extension)) {
+          return { category: "css", label: "CSS", iconKey: "css" };
         }
 
-        if (sheetExtensions.has(extension)) {
-          return { category: "sheet", glyph: "X", label: "XLS" };
+        if (jsonExtensions.has(extension)) {
+          return { category: "json", label: "JSON", iconKey: "json" };
         }
 
-        if (slidesExtensions.has(extension)) {
-          return { category: "slides", glyph: "P", label: "PPT" };
+        if (xmlExtensions.has(extension)) {
+          return { category: "xml", label: "XML", iconKey: "xml" };
         }
 
-        if (archiveExtensions.has(extension)) {
-          return { category: "archive", glyph: "Z", label: "ZIP" };
+        if (yamlExtensions.has(extension)) {
+          return { category: "yaml", label: "YAML", iconKey: "yaml" };
         }
 
-        if (executableExtensions.has(extension)) {
-          return { category: "executable", glyph: "!", label: "EXE" };
+        if (csvExtensions.has(extension)) {
+          return { category: "csv", label: "CSV", iconKey: "csv" };
         }
 
-        if (imageExtensions.has(extension)) {
-          return { category: "image", glyph: "I", label: "IMG" };
+        if (shellExtensions.has(extension)) {
+          return { category: "shell", label: "SH", iconKey: "shell" };
         }
 
-        if (videoExtensions.has(extension)) {
-          return { category: "video", glyph: "V", label: "VID" };
+        if (sqlExtensions.has(extension)) {
+          return { category: "sql", label: "SQL", iconKey: "sql" };
         }
 
-        if (audioExtensions.has(extension)) {
-          return { category: "audio", glyph: "A", label: "AUD" };
+        if (asmExtensions.has(extension)) {
+          return { category: "asm", label: upperExtension.slice(0, 4), iconKey: "asm" };
         }
 
         if (dataExtensions.has(extension)) {
-          return { category: "data", glyph: "{}", label: upperExtension.slice(0, 4) };
+          return { category: "data", label: upperExtension.slice(0, 4), iconKey: "data" };
         }
 
         if (codeExtensions.has(extension)) {
-          return { category: "code", glyph: "<>", label: upperExtension.slice(0, 4) };
+          return { category: "code", label: upperExtension.slice(0, 4), iconKey: "code" };
+        }
+
+        if (documentExtensions.has(extension)) {
+          return { category: "docx", label: upperExtension.slice(0, 4), iconKey: "docx" };
+        }
+
+        if (sheetExtensions.has(extension)) {
+          return { category: "xlsx", label: upperExtension.slice(0, 4), iconKey: "xlsx" };
+        }
+
+        if (slidesExtensions.has(extension)) {
+          return { category: "pptx", label: upperExtension.slice(0, 4), iconKey: "pptx" };
+        }
+
+        if (textExtensions.has(extension)) {
+          return { category: "text", label: "TXT", iconKey: "text" };
+        }
+
+        if (archiveExtensions.has(extension)) {
+          return { category: "archive", label: "ZIP", iconKey: "archive" };
+        }
+
+        if (executableExtensions.has(extension)) {
+          return { category: "executable", label: "EXE", iconKey: "executable" };
+        }
+
+        if (elfExtensions.has(extension)) {
+          return { category: "elf", label: upperExtension.slice(0, 4), iconKey: "binary" };
+        }
+
+        if (sharedLibraryExtensions.has(extension)) {
+          return { category: "sharedlib", label: upperExtension.slice(0, 4), iconKey: "binary" };
+        }
+
+        if (idaExtensions.has(extension)) {
+          return { category: "ida", label: upperExtension.slice(0, 4), iconKey: "binary" };
+        }
+
+        if (objectExtensions.has(extension)) {
+          return { category: "object", label: upperExtension.slice(0, 4), iconKey: "binary" };
+        }
+
+        if (pngExtensions.has(extension)) {
+          return { category: "png", label: upperExtension.slice(0, 4), iconKey: "png" };
+        }
+
+        if (jpgExtensions.has(extension)) {
+          return { category: "jpg", label: upperExtension.slice(0, 4), iconKey: "jpg" };
+        }
+
+        if (imageExtensions.has(extension)) {
+          return { category: "image", label: "IMG", iconKey: "image" };
+        }
+
+        if (mp4Extensions.has(extension)) {
+          return { category: "mp4", label: upperExtension.slice(0, 4), iconKey: "mp4" };
+        }
+
+        if (videoExtensions.has(extension)) {
+          return { category: "video", label: "VID", iconKey: "video" };
+        }
+
+        if (mp3Extensions.has(extension)) {
+          return { category: "mp3", label: upperExtension.slice(0, 4), iconKey: "mp3" };
+        }
+
+        if (audioExtensions.has(extension)) {
+          return { category: "audio", label: "AUD", iconKey: "audio" };
         }
 
         return { category: "generic", glyph: "F", label: getAttachmentIconLabel(fileName) };
@@ -520,6 +743,15 @@ function buildPdfExportHtml({ title, html, resources, highlightThemeCss, fontFac
 
       function buildAttachmentIconMarkup(fileName) {
         const meta = getAttachmentIconMeta(fileName);
+
+        if (meta.iconKey && payload.iconAssets?.[meta.iconKey]) {
+          return \`
+            <div class="attachment-export-art attachment-export-art--\${escapeHtml(meta.category)}">
+              <img src="\${escapeHtml(payload.iconAssets[meta.iconKey])}" alt="" />
+            </div>
+          \`;
+        }
+
         return \`
           <div class="attachment-export-badge attachment-export-badge--\${escapeHtml(meta.category)}">
             <span class="attachment-export-glyph">\${escapeHtml(meta.glyph)}</span>

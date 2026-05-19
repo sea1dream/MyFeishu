@@ -4,8 +4,11 @@ const fs = require("node:fs");
 const fsp = fs.promises;
 const os = require("node:os");
 const path = require("node:path");
+const { execFile } = require("node:child_process");
 const { pathToFileURL } = require("node:url");
+const { promisify } = require("node:util");
 const packageInfo = require("./package.json");
+const { path7za } = require("7zip-bin");
 const {
   ensureFlowzipExtension: sharedEnsureFlowzipExtension,
   FLOWZIP_EXTENSION,
@@ -15,6 +18,12 @@ const {
   rewriteHtmlResourcePaths,
   serializeFlowzipManifest,
 } = require("./shared/archive-format");
+const {
+  ARCHIVE_PREVIEW_ENTRY_LIMIT,
+  normalizeArchivePreviewPath,
+  parseSevenZipListOutput,
+  summarizeArchiveEntries,
+} = require("./shared/archive-preview");
 const {
   DOC_EXTENSION,
   PDF_EXTENSION,
@@ -37,6 +46,7 @@ const { applyPdfMetadataAsync } = require("./main-modules/pdf-metadata");
 const { buildPdfExportHtml: buildPdfExportHtmlTemplate } = require("./main-modules/pdf-export-template");
 const ensureDocumentExtension = sharedEnsureDocumentExtension;
 const ensureFlowzipExtension = sharedEnsureFlowzipExtension;
+const execFileAsync = promisify(execFile);
 
 const DOC_FILTERS = [{ name: "FlowDoc 文档", extensions: [DOC_EXTENSION.slice(1)] }];
 const FLOWZIP_FILTERS = [{ name: "FlowZip 压缩包", extensions: [FLOWZIP_EXTENSION.slice(1)] }];
@@ -52,6 +62,7 @@ const HIGHLIGHT_THEME_PATH = path.join(
 );
 const PDF_EXPORT_PRELOAD_PATH = path.join(__dirname, "pdf-export-preload.js");
 const LOCAL_FONTS_ROOT = path.join(__dirname, "assets", "fonts");
+const FILE_ICON_ASSET_ROOT = path.join(__dirname, "assets", "file-icons");
 const WINDOW_ICON_PATH = path.join(__dirname, "assets", "branding", "flowdoc-window.ico");
 const RUNTIME_DOCUMENT_METADATA = buildRuntimeDocumentMetadata({
   appId: APP_ID,
@@ -72,6 +83,55 @@ const variableFontFace = (family, directory, fileName, fontWeight = "100 900") =
   fileName,
   fontWeight,
 });
+const ATTACHMENT_PDF_ICON_ASSETS = {
+  pdf: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "pdf.svg")).href,
+  python: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "python.svg")).href,
+  c: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "c.svg")).href,
+  cpp: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "cpp.svg")).href,
+  javascript: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "javascript.svg")).href,
+  typescript: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "typescript.svg")).href,
+  html: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "html.svg")).href,
+  css: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "css.svg")).href,
+  json: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "json.svg")).href,
+  xml: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "xml.svg")).href,
+  yaml: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "yaml.svg")).href,
+  java: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "java.svg")).href,
+  shell: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "shell.svg")).href,
+  sql: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "sql.svg")).href,
+  go: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "go.svg")).href,
+  rust: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "rust.svg")).href,
+  php: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "php.svg")).href,
+  ruby: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "ruby.svg")).href,
+  kotlin: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "kotlin.svg")).href,
+  swift: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "swift.svg")).href,
+  scala: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "scala.svg")).href,
+  dart: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "dart.svg")).href,
+  lua: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "lua.svg")).href,
+  perl: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "perl.svg")).href,
+  powershell: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "powershell.svg")).href,
+  csv: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "csv.svg")).href,
+  png: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "png.svg")).href,
+  jpg: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "jpg.svg")).href,
+  mp3: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "mp3.svg")).href,
+  mp4: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "mp4.svg")).href,
+  docx: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "docx.svg")).href,
+  xlsx: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "xlsx.svg")).href,
+  pptx: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "pptx.svg")).href,
+  binary: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "binary.svg")).href,
+  asm: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "asm.svg")).href,
+  markdown: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "markdown.svg")).href,
+  text: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "text.svg")).href,
+  document: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "document.svg")).href,
+  sheet: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "sheet.svg")).href,
+  slides: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "slides.svg")).href,
+  archive: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "archive.svg")).href,
+  executable: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "executable.svg")).href,
+  image: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "image.svg")).href,
+  video: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "video.svg")).href,
+  audio: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "audio.svg")).href,
+  data: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "data.svg")).href,
+  code: pathToFileURL(path.join(FILE_ICON_ASSET_ROOT, "code.svg")).href,
+};
 const LOCAL_FONT_FACES = [
   staticFontFace("Google Sans Code", "google-sans-code", "GoogleSansCode-Regular.ttf", 400),
   staticFontFace("Google Sans Code", "google-sans-code", "GoogleSansCode-Medium.ttf", 500),
@@ -278,6 +338,17 @@ const TEXT_PREVIEW_EXTENSIONS = new Set([
 ]);
 const VIDEO_PREVIEW_EXTENSIONS = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
 const AUDIO_PREVIEW_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".aac", ".flac"]);
+const ARCHIVE_PREVIEW_EXTENSIONS = new Set([
+  ".zip",
+  ".rar",
+  ".7z",
+  ".tar",
+  ".gz",
+  ".tgz",
+  ".bz2",
+  ".xz",
+  FLOWZIP_EXTENSION,
+]);
 let cachedDocumentLibraryPreference;
 let mainWindow = null;
 let pendingDocumentOpenPath = "";
@@ -796,7 +867,92 @@ function getAttachmentPreviewKind(filePath) {
     return "audio";
   }
 
+  if (ARCHIVE_PREVIEW_EXTENSIONS.has(extension)) {
+    return "archive";
+  }
+
   return "unsupported";
+}
+
+function resolveSevenZipExecutablePath() {
+  if (!app.isPackaged) {
+    return path7za;
+  }
+
+  return String(path7za || "").replace(`${path.sep}app.asar${path.sep}`, `${path.sep}app.asar.unpacked${path.sep}`);
+}
+
+async function listZipArchiveEntriesAsync(filePath) {
+  const archive = new AdmZip(filePath);
+  const entries = archive
+    .getEntries()
+    .map((entry) => ({
+      path: normalizeArchivePreviewPath(entry.entryName),
+      isDirectory: entry.isDirectory,
+      size: Number(entry.header?.size || 0),
+      packedSize: Number(entry.compressedSize || 0),
+      modifiedAt: entry.header?.time ? new Date(entry.header.time).toISOString() : null,
+    }))
+    .filter((entry) => entry.path);
+  const summary = summarizeArchiveEntries(entries);
+  let flowzipInfo = null;
+
+  if (path.extname(filePath).toLowerCase() === FLOWZIP_EXTENSION) {
+    const manifestEntry = archive.getEntry("manifest.json");
+
+    if (manifestEntry) {
+      try {
+        const manifest = normalizeFlowzipManifest(JSON.parse(manifestEntry.getData().toString("utf8")));
+        flowzipInfo = {
+          documentCount: manifest.documents.length,
+          rootName: manifest.source?.rootName || "",
+          sourceMode: manifest.source?.mode || "document",
+        };
+      } catch {
+        flowzipInfo = null;
+      }
+    }
+  }
+
+  return {
+    archiveType: path.extname(filePath).toLowerCase() === FLOWZIP_EXTENSION ? FLOWZIP_KIND : "zip",
+    entries: entries.slice(0, ARCHIVE_PREVIEW_ENTRY_LIMIT),
+    entryCount: entries.length,
+    truncated: entries.length > ARCHIVE_PREVIEW_ENTRY_LIMIT,
+    flowzipInfo,
+    ...summary,
+  };
+}
+
+async function listSevenZipArchiveEntriesAsync(filePath) {
+  const executablePath = resolveSevenZipExecutablePath();
+
+  if (!(await pathExists(executablePath))) {
+    throw new Error("未找到 7-Zip 预览组件，无法读取该压缩包目录。");
+  }
+
+  const { stdout } = await execFileAsync(executablePath, ["l", "-slt", filePath], {
+    windowsHide: true,
+    maxBuffer: 16 * 1024 * 1024,
+  });
+  const parsed = parseSevenZipListOutput(stdout, {
+    limit: ARCHIVE_PREVIEW_ENTRY_LIMIT,
+  });
+
+  return {
+    ...parsed,
+    ...summarizeArchiveEntries(parsed.entries),
+  };
+}
+
+async function previewArchiveAsync(filePath) {
+  const extension = path.extname(filePath || "").toLowerCase();
+
+  if (extension === ".zip" || extension === FLOWZIP_EXTENSION) {
+    return listZipArchiveEntriesAsync(filePath);
+  }
+
+  return listSevenZipArchiveEntriesAsync(filePath);
 }
 
 async function getPdfHighlightThemeCssAsync() {
@@ -1634,6 +1790,7 @@ async function exportDocumentAsPdfAsync(browserWindow, payload) {
       title: payload.title || sharedGetDocumentTitleFromPath(filePath),
       html: payload.html,
       resources: await buildPdfResourceMapAsync(filePath, payload.html),
+      iconAssets: ATTACHMENT_PDF_ICON_ASSETS,
       highlightThemeCss: await getPdfHighlightThemeCssAsync(),
       fontFaceCss: buildPdfFontFaceCss(),
       fontFamilies: resolvePdfFontFamilies(payload.fontOptions),
@@ -1806,6 +1963,21 @@ async function previewAttachmentAsync(documentPath, resourcePath) {
       size: textPreview.size,
       content: textPreview.content,
       truncated: textPreview.truncated,
+    };
+  }
+
+  if (previewKind === "archive") {
+    const archivePreview = await previewArchiveAsync(resolved.absolutePath);
+
+    return {
+      exists: true,
+      previewable: true,
+      previewKind,
+      name: resolved.name,
+      absolutePath: resolved.absolutePath,
+      fileUrl: resolved.fileUrl,
+      size: stat.size,
+      ...archivePreview,
     };
   }
 

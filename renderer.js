@@ -7,6 +7,12 @@ import {
   getCodeFontStyle,
   getDocumentFontStyle,
 } from "./renderer-modules/font-presets.mjs";
+import {
+  buildArchiveBreadcrumbs,
+  buildArchiveBrowserTree,
+  getArchiveDirectoryNode,
+  summarizeArchiveDirectory,
+} from "./renderer-modules/archive-browser.mjs";
 import { buildOutlineRenderItems, toggleCollapsedOutlineId } from "./renderer-modules/outline-utils.mjs";
 import {
   loadCollapsedOutlineIds,
@@ -44,7 +50,7 @@ const CODE_LANGUAGES = [
 const HISTORY_LIMIT = 180;
 const HISTORY_PERSIST_LIMIT = 60;
 const HISTORY_INPUT_DELAY = 90;
-const AUTOSAVE_DELAY = 1200;
+const AUTOSAVE_DELAY = 280;
 const CODE_BLOCK_RENDER_DELAY = 120;
 const CODE_COPY_FEEDBACK_DELAY = 1800;
 const BLOCK_HANDLE_WIDTH = 42;
@@ -132,10 +138,43 @@ const ATTACHMENT_AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".a
 const ATTACHMENT_DOCUMENT_EXTENSIONS = new Set([".doc", ".docx", ".rtf", ".odt", ".wps"]);
 const ATTACHMENT_SPREADSHEET_EXTENSIONS = new Set([".xls", ".xlsx", ".csv", ".tsv", ".ods"]);
 const ATTACHMENT_PRESENTATION_EXTENSIONS = new Set([".ppt", ".pptx", ".odp", ".key"]);
-const ATTACHMENT_ARCHIVE_EXTENSIONS = new Set([".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz"]);
+const ATTACHMENT_ARCHIVE_EXTENSIONS = new Set([".zip", ".rar", ".7z", ".tar", ".gz", ".tgz", ".bz2", ".xz", ".flowzip"]);
 const ATTACHMENT_EXECUTABLE_EXTENSIONS = new Set([".exe", ".msi", ".bat", ".cmd", ".ps1", ".apk", ".appimage"]);
 const ATTACHMENT_DATA_EXTENSIONS = new Set([".json", ".yaml", ".yml", ".toml", ".xml", ".ini", ".cfg"]);
 const ATTACHMENT_PYTHON_EXTENSIONS = new Set([".py", ".pyw", ".ipynb"]);
+const ATTACHMENT_C_EXTENSIONS = new Set([".c"]);
+const ATTACHMENT_CPP_EXTENSIONS = new Set([".cc", ".cpp", ".cxx", ".h", ".hh", ".hpp"]);
+const ATTACHMENT_JAVASCRIPT_EXTENSIONS = new Set([".js", ".jsx", ".cjs", ".mjs"]);
+const ATTACHMENT_TYPESCRIPT_EXTENSIONS = new Set([".ts", ".tsx"]);
+const ATTACHMENT_HTML_EXTENSIONS = new Set([".html", ".htm"]);
+const ATTACHMENT_CSS_EXTENSIONS = new Set([".css"]);
+const ATTACHMENT_JSON_EXTENSIONS = new Set([".json"]);
+const ATTACHMENT_XML_EXTENSIONS = new Set([".xml"]);
+const ATTACHMENT_YAML_EXTENSIONS = new Set([".yaml", ".yml"]);
+const ATTACHMENT_JAVA_EXTENSIONS = new Set([".java"]);
+const ATTACHMENT_SHELL_EXTENSIONS = new Set([".sh"]);
+const ATTACHMENT_SQL_EXTENSIONS = new Set([".sql"]);
+const ATTACHMENT_GO_EXTENSIONS = new Set([".go"]);
+const ATTACHMENT_RUST_EXTENSIONS = new Set([".rs"]);
+const ATTACHMENT_PHP_EXTENSIONS = new Set([".php"]);
+const ATTACHMENT_RUBY_EXTENSIONS = new Set([".rb"]);
+const ATTACHMENT_KOTLIN_EXTENSIONS = new Set([".kt"]);
+const ATTACHMENT_SWIFT_EXTENSIONS = new Set([".swift"]);
+const ATTACHMENT_SCALA_EXTENSIONS = new Set([".scala"]);
+const ATTACHMENT_DART_EXTENSIONS = new Set([".dart"]);
+const ATTACHMENT_LUA_EXTENSIONS = new Set([".lua"]);
+const ATTACHMENT_PERL_EXTENSIONS = new Set([".pl"]);
+const ATTACHMENT_POWERSHELL_EXTENSIONS = new Set([".ps1"]);
+const ATTACHMENT_CSV_EXTENSIONS = new Set([".csv", ".tsv"]);
+const ATTACHMENT_PNG_EXTENSIONS = new Set([".png", ".webp", ".gif", ".bmp"]);
+const ATTACHMENT_JPG_EXTENSIONS = new Set([".jpg", ".jpeg", ".svg"]);
+const ATTACHMENT_MP3_EXTENSIONS = new Set([".mp3", ".wav", ".m4a", ".aac", ".flac"]);
+const ATTACHMENT_MP4_EXTENSIONS = new Set([".mp4", ".webm", ".ogg", ".mov", ".m4v"]);
+const ATTACHMENT_ELF_EXTENSIONS = new Set([".elf", ".out", ".bin"]);
+const ATTACHMENT_SHARED_LIBRARY_EXTENSIONS = new Set([".so", ".dll", ".dylib"]);
+const ATTACHMENT_IDA_EXTENSIONS = new Set([".i64", ".idb"]);
+const ATTACHMENT_OBJECT_EXTENSIONS = new Set([".o", ".a", ".lib"]);
+const ATTACHMENT_ASM_EXTENSIONS = new Set([".asm", ".s"]);
 const ATTACHMENT_CODE_LANGUAGE_BY_EXTENSION = new Map([
   [".c", "c"],
   [".cc", "cpp"],
@@ -176,6 +215,56 @@ const ATTACHMENT_CODE_LANGUAGE_BY_EXTENSION = new Map([
   [".yaml", "yaml"],
   [".toml", "ini"],
 ]);
+const ATTACHMENT_CODE_EXTENSIONS = new Set(ATTACHMENT_CODE_LANGUAGE_BY_EXTENSION.keys());
+const ATTACHMENT_ICON_ASSET_PATHS = {
+  pdf: "./assets/file-icons/pdf.svg",
+  python: "./assets/file-icons/python.svg",
+  c: "./assets/file-icons/c.svg",
+  cpp: "./assets/file-icons/cpp.svg",
+  javascript: "./assets/file-icons/javascript.svg",
+  typescript: "./assets/file-icons/typescript.svg",
+  html: "./assets/file-icons/html.svg",
+  css: "./assets/file-icons/css.svg",
+  json: "./assets/file-icons/json.svg",
+  xml: "./assets/file-icons/xml.svg",
+  yaml: "./assets/file-icons/yaml.svg",
+  java: "./assets/file-icons/java.svg",
+  shell: "./assets/file-icons/shell.svg",
+  sql: "./assets/file-icons/sql.svg",
+  go: "./assets/file-icons/go.svg",
+  rust: "./assets/file-icons/rust.svg",
+  php: "./assets/file-icons/php.svg",
+  ruby: "./assets/file-icons/ruby.svg",
+  kotlin: "./assets/file-icons/kotlin.svg",
+  swift: "./assets/file-icons/swift.svg",
+  scala: "./assets/file-icons/scala.svg",
+  dart: "./assets/file-icons/dart.svg",
+  lua: "./assets/file-icons/lua.svg",
+  perl: "./assets/file-icons/perl.svg",
+  powershell: "./assets/file-icons/powershell.svg",
+  csv: "./assets/file-icons/csv.svg",
+  png: "./assets/file-icons/png.svg",
+  jpg: "./assets/file-icons/jpg.svg",
+  mp3: "./assets/file-icons/mp3.svg",
+  mp4: "./assets/file-icons/mp4.svg",
+  docx: "./assets/file-icons/docx.svg",
+  xlsx: "./assets/file-icons/xlsx.svg",
+  pptx: "./assets/file-icons/pptx.svg",
+  binary: "./assets/file-icons/binary.svg",
+  asm: "./assets/file-icons/asm.svg",
+  markdown: "./assets/file-icons/markdown.svg",
+  text: "./assets/file-icons/text.svg",
+  document: "./assets/file-icons/document.svg",
+  sheet: "./assets/file-icons/sheet.svg",
+  slides: "./assets/file-icons/slides.svg",
+  archive: "./assets/file-icons/archive.svg",
+  executable: "./assets/file-icons/executable.svg",
+  image: "./assets/file-icons/image.svg",
+  video: "./assets/file-icons/video.svg",
+  audio: "./assets/file-icons/audio.svg",
+  data: "./assets/file-icons/data.svg",
+  code: "./assets/file-icons/code.svg",
+};
 
 const state = {
   currentDocument: null,
@@ -850,11 +939,223 @@ function closeAttachmentPreview() {
   state.attachmentPreview = null;
 }
 
+function formatArchivePreviewDate(value) {
+  if (!value) {
+    return "";
+  }
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return date.toLocaleString("zh-CN", {
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
+function buildArchiveDirectoryMetaText(node) {
+  const summary = summarizeArchiveDirectory(node);
+  const parts = [];
+
+  if (summary.childDirectoryCount) {
+    parts.push(`${summary.childDirectoryCount} 个文件夹`);
+  }
+
+  if (summary.childFileCount) {
+    parts.push(`${summary.childFileCount} 个文件`);
+  }
+
+  return parts.join(" · ") || "空文件夹";
+}
+
+function buildArchiveFileMetaText(node) {
+  const parts = [];
+  const fileSize = formatFileSize(node?.size);
+  const modifiedAt = formatArchivePreviewDate(node?.modifiedAt);
+
+  if (fileSize) {
+    parts.push(fileSize);
+  }
+
+  if (modifiedAt) {
+    parts.push(modifiedAt);
+  }
+
+  return parts.join(" · ");
+}
+
+function buildArchivePreviewBrowser(preview) {
+  const container = document.createElement("div");
+  container.className = "preview-archive-browser";
+
+  const toolbar = document.createElement("div");
+  toolbar.className = "preview-archive-toolbar";
+
+  const breadcrumbBar = document.createElement("div");
+  breadcrumbBar.className = "preview-archive-breadcrumbs";
+
+  const upButton = document.createElement("button");
+  upButton.type = "button";
+  upButton.className = "preview-archive-up";
+  upButton.textContent = "返回上一级";
+
+  toolbar.append(breadcrumbBar, upButton);
+  container.append(toolbar);
+
+  const currentDirectoryHint = document.createElement("p");
+  currentDirectoryHint.className = "preview-archive-current-path";
+  container.append(currentDirectoryHint);
+
+  const list = document.createElement("div");
+  list.className = "preview-archive-list";
+  container.append(list);
+
+  const tree = buildArchiveBrowserTree(preview.entries);
+  let currentPath = "";
+
+  function renderDirectory(path = "") {
+    const currentDirectory = getArchiveDirectoryNode(tree, path) || tree;
+    currentPath = currentDirectory.path || "";
+    currentDirectoryHint.textContent = currentPath ? `当前目录：${currentPath}` : "当前目录：压缩包根目录";
+
+    const breadcrumbs = buildArchiveBreadcrumbs(currentPath, "压缩包");
+    breadcrumbBar.replaceChildren();
+
+    breadcrumbs.forEach((item, index) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "preview-archive-breadcrumb";
+      button.textContent = item.label;
+
+      if (index === breadcrumbs.length - 1) {
+        button.classList.add("is-current");
+        button.disabled = true;
+      } else {
+        button.addEventListener("click", () => renderDirectory(item.path));
+      }
+
+      breadcrumbBar.append(button);
+
+      if (index < breadcrumbs.length - 1) {
+        const separator = document.createElement("span");
+        separator.className = "preview-archive-breadcrumb-separator";
+        separator.textContent = "/";
+        breadcrumbBar.append(separator);
+      }
+    });
+
+    upButton.disabled = !currentPath;
+    list.replaceChildren();
+
+    currentDirectory.directories.forEach((directoryNode) => {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "preview-archive-entry preview-archive-entry-folder";
+
+      const main = document.createElement("span");
+      main.className = "preview-archive-entry-main";
+
+      const badge = document.createElement("span");
+      badge.className = "preview-archive-entry-badge";
+      badge.textContent = "DIR";
+
+      const textWrap = document.createElement("span");
+      textWrap.className = "preview-archive-entry-text";
+
+      const title = document.createElement("span");
+      title.className = "preview-archive-entry-title";
+      title.textContent = directoryNode.name;
+
+      const subtitle = document.createElement("span");
+      subtitle.className = "preview-archive-entry-subtitle";
+      subtitle.textContent = buildArchiveDirectoryMetaText(directoryNode);
+
+      textWrap.append(title, subtitle);
+      main.append(badge, textWrap);
+
+      const meta = document.createElement("span");
+      meta.className = "preview-archive-entry-meta";
+      meta.textContent = "打开";
+
+      row.append(main, meta);
+      row.addEventListener("click", () => renderDirectory(directoryNode.path));
+      list.append(row);
+    });
+
+    currentDirectory.files.forEach((fileNode) => {
+      const row = document.createElement("div");
+      row.className = "preview-archive-entry preview-archive-entry-file";
+
+      const main = document.createElement("span");
+      main.className = "preview-archive-entry-main";
+
+      const badge = document.createElement("span");
+      badge.className = "preview-archive-entry-badge preview-archive-entry-badge-file";
+      const extension = (fileNode.name.split(".").pop() || "FILE").slice(0, 5).toUpperCase();
+      badge.textContent = extension;
+
+      const textWrap = document.createElement("span");
+      textWrap.className = "preview-archive-entry-text";
+
+      const title = document.createElement("span");
+      title.className = "preview-archive-entry-title";
+      title.textContent = fileNode.name;
+
+      const subtitle = document.createElement("span");
+      subtitle.className = "preview-archive-entry-subtitle";
+      subtitle.textContent = fileNode.path;
+
+      textWrap.append(title, subtitle);
+      main.append(badge, textWrap);
+
+      const meta = document.createElement("span");
+      meta.className = "preview-archive-entry-meta";
+      meta.textContent = buildArchiveFileMetaText(fileNode);
+
+      row.append(main, meta);
+      list.append(row);
+    });
+
+    if (!currentDirectory.directories.length && !currentDirectory.files.length) {
+      const empty = document.createElement("div");
+      empty.className = "preview-empty";
+      empty.textContent = "这个目录里没有可显示的内容。";
+      list.append(empty);
+    }
+  }
+
+  upButton.addEventListener("click", () => {
+    if (!currentPath) {
+      return;
+    }
+
+    const nextPath = currentPath.includes("/") ? currentPath.slice(0, currentPath.lastIndexOf("/")) : "";
+    renderDirectory(nextPath);
+  });
+
+  renderDirectory("");
+  return container;
+}
+
 function openAttachmentPreview(preview, relativePath) {
   refs.attachmentPreviewTitle.textContent = preview.name || "附件";
-  refs.attachmentPreviewMeta.textContent = [relativePath, formatFileSize(preview.size)]
-    .filter(Boolean)
-    .join(" | ");
+  const previewMetaParts = [relativePath, formatFileSize(preview.size)];
+
+  if (preview.previewKind === "archive") {
+    const archiveCount = Number(preview.entryCount || 0);
+
+    if (archiveCount > 0) {
+      previewMetaParts.push(`${archiveCount} 项`);
+    }
+  }
+
+  refs.attachmentPreviewMeta.textContent = previewMetaParts.filter(Boolean).join(" | ");
   refs.attachmentPreviewDownload.disabled = false;
   refs.attachmentPreviewDownload.dataset.relativePath = relativePath;
   refs.attachmentPreviewModal.classList.remove("hidden");
@@ -934,6 +1235,51 @@ function openAttachmentPreview(preview, relativePath) {
       pre.textContent = preview.content || "";
       body.append(pre);
     }
+  } else if (kind === "archive") {
+    const container = document.createElement("div");
+    container.className = "preview-archive";
+
+    const summary = document.createElement("div");
+    summary.className = "preview-archive-summary";
+    const fileCount = Number(preview.fileCount || 0);
+    const directoryCount = Number(preview.directoryCount || 0);
+    const unpackedSize = formatFileSize(preview.totalUnpackedSize);
+    const summaryParts = [
+      preview.archiveType ? `格式：${String(preview.archiveType).toUpperCase()}` : "",
+      fileCount ? `${fileCount} 个文件` : "",
+      directoryCount ? `${directoryCount} 个目录` : "",
+      unpackedSize || "",
+    ].filter(Boolean);
+    summary.textContent = summaryParts.join(" · ") || "压缩包内容";
+    container.append(summary);
+
+    if (preview.flowzipInfo?.documentCount) {
+      const flowzipNote = document.createElement("p");
+      flowzipNote.className = "preview-archive-note";
+      const sourceModeText = preview.flowzipInfo.sourceMode === "directory" ? "目录打包" : "单文档打包";
+      flowzipNote.textContent = `FlowZip 文档包 · ${preview.flowzipInfo.documentCount} 篇文档 · ${sourceModeText}`;
+      container.append(flowzipNote);
+    }
+
+    if (preview.truncated) {
+      const note = document.createElement("p");
+      note.className = "preview-archive-note";
+      note.textContent = "压缩包项目较多，当前只显示前 800 项。";
+      container.append(note);
+    }
+
+    const entries = Array.isArray(preview.entries) ? preview.entries : [];
+
+    if (!entries.length) {
+      const empty = document.createElement("div");
+      empty.className = "preview-empty";
+      empty.textContent = "压缩包内没有可显示的文件条目。";
+      container.append(empty);
+    } else {
+      container.append(buildArchivePreviewBrowser(preview));
+    }
+
+    body.append(container);
   } else {
     const empty = document.createElement("div");
     empty.className = "preview-empty";
@@ -1005,6 +1351,10 @@ function getAttachmentPreviewKind(value) {
     return "audio";
   }
 
+  if (ATTACHMENT_ARCHIVE_EXTENSIONS.has(extension)) {
+    return "archive";
+  }
+
   return "";
 }
 
@@ -1017,69 +1367,236 @@ function getAttachmentIconMeta(value) {
   const upperExtension = extension.replace(".", "").toUpperCase() || "FILE";
 
   if (ATTACHMENT_PDF_EXTENSIONS.has(extension)) {
-    return { category: "pdf", glyph: "A", label: "PDF", description: "PDF 文档" };
+    return { category: "pdf", label: "PDF", description: "PDF 文档", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.pdf };
   }
 
   if (ATTACHMENT_PYTHON_EXTENSIONS.has(extension)) {
-    return { category: "python", glyph: "Py", label: "PY", description: "Python 脚本" };
+    return { category: "python", label: "PY", description: "Python 脚本", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.python };
+  }
+
+  if (ATTACHMENT_JAVASCRIPT_EXTENSIONS.has(extension)) {
+    return {
+      category: "javascript",
+      label: upperExtension.slice(0, 4),
+      description: "JavaScript 文件",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.javascript,
+    };
+  }
+
+  if (ATTACHMENT_TYPESCRIPT_EXTENSIONS.has(extension)) {
+    return {
+      category: "typescript",
+      label: upperExtension.slice(0, 4),
+      description: "TypeScript 文件",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.typescript,
+    };
+  }
+
+  if (ATTACHMENT_C_EXTENSIONS.has(extension)) {
+    return { category: "c", label: "C", description: "C 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.c };
+  }
+
+  if (ATTACHMENT_CPP_EXTENSIONS.has(extension)) {
+    return { category: "cpp", label: "C++", description: "C/C++ 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.cpp };
+  }
+
+  if (ATTACHMENT_JAVA_EXTENSIONS.has(extension)) {
+    return { category: "java", label: "JAVA", description: "Java 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.java };
+  }
+
+  if (ATTACHMENT_GO_EXTENSIONS.has(extension)) {
+    return { category: "go", label: "GO", description: "Go 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.go };
+  }
+
+  if (ATTACHMENT_RUST_EXTENSIONS.has(extension)) {
+    return { category: "rust", label: "RS", description: "Rust 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.rust };
+  }
+
+  if (ATTACHMENT_PHP_EXTENSIONS.has(extension)) {
+    return { category: "php", label: "PHP", description: "PHP 脚本", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.php };
+  }
+
+  if (ATTACHMENT_RUBY_EXTENSIONS.has(extension)) {
+    return { category: "ruby", label: "RB", description: "Ruby 脚本", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.ruby };
+  }
+
+  if (ATTACHMENT_KOTLIN_EXTENSIONS.has(extension)) {
+    return { category: "kotlin", label: "KT", description: "Kotlin 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.kotlin };
+  }
+
+  if (ATTACHMENT_SWIFT_EXTENSIONS.has(extension)) {
+    return { category: "swift", label: "SWFT", description: "Swift 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.swift };
+  }
+
+  if (ATTACHMENT_SCALA_EXTENSIONS.has(extension)) {
+    return { category: "scala", label: "SCA", description: "Scala 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.scala };
+  }
+
+  if (ATTACHMENT_DART_EXTENSIONS.has(extension)) {
+    return { category: "dart", label: "DART", description: "Dart 源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.dart };
+  }
+
+  if (ATTACHMENT_LUA_EXTENSIONS.has(extension)) {
+    return { category: "lua", label: "LUA", description: "Lua 脚本", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.lua };
+  }
+
+  if (ATTACHMENT_PERL_EXTENSIONS.has(extension)) {
+    return { category: "perl", label: "PL", description: "Perl 脚本", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.perl };
+  }
+
+  if (ATTACHMENT_POWERSHELL_EXTENSIONS.has(extension)) {
+    return {
+      category: "powershell",
+      label: "PS1",
+      description: "PowerShell 脚本",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.powershell,
+    };
   }
 
   if (ATTACHMENT_MARKDOWN_EXTENSIONS.has(extension)) {
-    return { category: "markdown", glyph: "#", label: "MD", description: "Markdown 文档" };
+    return {
+      category: "markdown",
+      label: "MD",
+      description: "Markdown 文档",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.markdown,
+    };
   }
 
-  if (ATTACHMENT_TEXT_EXTENSIONS.has(extension)) {
-    return { category: "text", glyph: "T", label: "TXT", description: "文本文件" };
+  if (ATTACHMENT_HTML_EXTENSIONS.has(extension)) {
+    return { category: "html", label: "HTML", description: "HTML 文档", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.html };
   }
 
-  if (ATTACHMENT_DOCUMENT_EXTENSIONS.has(extension)) {
-    return { category: "document", glyph: "W", label: "DOC", description: "文档文件" };
+  if (ATTACHMENT_CSS_EXTENSIONS.has(extension)) {
+    return { category: "css", label: "CSS", description: "样式表", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.css };
   }
 
-  if (ATTACHMENT_SPREADSHEET_EXTENSIONS.has(extension)) {
-    return { category: "sheet", glyph: "X", label: "XLS", description: "表格文件" };
+  if (ATTACHMENT_JSON_EXTENSIONS.has(extension)) {
+    return { category: "json", label: "JSON", description: "JSON 数据", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.json };
   }
 
-  if (ATTACHMENT_PRESENTATION_EXTENSIONS.has(extension)) {
-    return { category: "slides", glyph: "P", label: "PPT", description: "演示文件" };
+  if (ATTACHMENT_XML_EXTENSIONS.has(extension)) {
+    return { category: "xml", label: "XML", description: "XML 数据", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.xml };
   }
 
-  if (ATTACHMENT_ARCHIVE_EXTENSIONS.has(extension)) {
-    return { category: "archive", glyph: "Z", label: "ZIP", description: "压缩包" };
+  if (ATTACHMENT_YAML_EXTENSIONS.has(extension)) {
+    return { category: "yaml", label: "YAML", description: "YAML 配置", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.yaml };
   }
 
-  if (ATTACHMENT_EXECUTABLE_EXTENSIONS.has(extension)) {
-    return { category: "executable", glyph: "!", label: "EXE", description: "可执行文件" };
+  if (ATTACHMENT_CSV_EXTENSIONS.has(extension)) {
+    return { category: "csv", label: "CSV", description: "分隔数据表", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.csv };
   }
 
-  if (ATTACHMENT_IMAGE_EXTENSIONS.has(extension)) {
-    return { category: "image", glyph: "I", label: "IMG", description: "图片文件" };
+  if (ATTACHMENT_SHELL_EXTENSIONS.has(extension)) {
+    return { category: "shell", label: "SH", description: "Shell 脚本", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.shell };
   }
 
-  if (ATTACHMENT_VIDEO_EXTENSIONS.has(extension)) {
-    return { category: "video", glyph: "V", label: "VID", description: "视频文件" };
+  if (ATTACHMENT_SQL_EXTENSIONS.has(extension)) {
+    return { category: "sql", label: "SQL", description: "SQL 脚本", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.sql };
   }
 
-  if (ATTACHMENT_AUDIO_EXTENSIONS.has(extension)) {
-    return { category: "audio", glyph: "A", label: "AUD", description: "音频文件" };
+  if (ATTACHMENT_ASM_EXTENSIONS.has(extension)) {
+    return { category: "asm", label: upperExtension.slice(0, 4), description: "汇编源码", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.asm };
   }
 
   if (ATTACHMENT_DATA_EXTENSIONS.has(extension)) {
     return {
       category: "data",
-      glyph: "{}",
       label: upperExtension.slice(0, 4),
       description: "数据文件",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.data,
     };
   }
 
-  if (getAttachmentPreviewCodeLanguage(value) || [".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rs", ".php"].includes(extension)) {
+  if (ATTACHMENT_CODE_EXTENSIONS.has(extension)) {
     return {
       category: "code",
-      glyph: "<>",
       label: upperExtension.slice(0, 4),
       description: "代码文件",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.code,
     };
+  }
+
+  if (ATTACHMENT_DOCUMENT_EXTENSIONS.has(extension)) {
+    return {
+      category: "docx",
+      label: upperExtension.slice(0, 4),
+      description: "Office 文档",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.docx,
+    };
+  }
+
+  if (ATTACHMENT_SPREADSHEET_EXTENSIONS.has(extension)) {
+    return { category: "xlsx", label: upperExtension.slice(0, 4), description: "表格文件", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.xlsx };
+  }
+
+  if (ATTACHMENT_PRESENTATION_EXTENSIONS.has(extension)) {
+    return {
+      category: "pptx",
+      label: upperExtension.slice(0, 4),
+      description: "演示文件",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.pptx,
+    };
+  }
+
+  if (ATTACHMENT_TEXT_EXTENSIONS.has(extension)) {
+    return { category: "text", label: "TXT", description: "文本文件", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.text };
+  }
+
+  if (ATTACHMENT_ARCHIVE_EXTENSIONS.has(extension)) {
+    return { category: "archive", label: "ZIP", description: "压缩包", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.archive };
+  }
+
+  if (ATTACHMENT_EXECUTABLE_EXTENSIONS.has(extension)) {
+    return {
+      category: "executable",
+      label: "EXE",
+      description: "可执行文件",
+      iconAsset: ATTACHMENT_ICON_ASSET_PATHS.executable,
+    };
+  }
+
+  if (ATTACHMENT_ELF_EXTENSIONS.has(extension)) {
+    return { category: "elf", label: upperExtension.slice(0, 4), description: "ELF / 二进制", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.binary };
+  }
+
+  if (ATTACHMENT_SHARED_LIBRARY_EXTENSIONS.has(extension)) {
+    return { category: "sharedlib", label: upperExtension.slice(0, 4), description: "动态库", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.binary };
+  }
+
+  if (ATTACHMENT_IDA_EXTENSIONS.has(extension)) {
+    return { category: "ida", label: upperExtension.slice(0, 4), description: "IDA 数据库", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.binary };
+  }
+
+  if (ATTACHMENT_OBJECT_EXTENSIONS.has(extension)) {
+    return { category: "object", label: upperExtension.slice(0, 4), description: "目标文件 / 静态库", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.binary };
+  }
+
+  if (ATTACHMENT_PNG_EXTENSIONS.has(extension)) {
+    return { category: "png", label: upperExtension.slice(0, 4), description: "位图图片", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.png };
+  }
+
+  if (ATTACHMENT_JPG_EXTENSIONS.has(extension)) {
+    return { category: "jpg", label: upperExtension.slice(0, 4), description: "图片文件", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.jpg };
+  }
+
+  if (ATTACHMENT_IMAGE_EXTENSIONS.has(extension)) {
+    return { category: "image", label: "IMG", description: "图片文件", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.image };
+  }
+
+  if (ATTACHMENT_MP4_EXTENSIONS.has(extension)) {
+    return { category: "mp4", label: upperExtension.slice(0, 4), description: "视频文件", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.mp4 };
+  }
+
+  if (ATTACHMENT_VIDEO_EXTENSIONS.has(extension)) {
+    return { category: "video", label: "VID", description: "视频文件", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.video };
+  }
+
+  if (ATTACHMENT_MP3_EXTENSIONS.has(extension)) {
+    return { category: "mp3", label: upperExtension.slice(0, 4), description: "音频文件", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.mp3 };
+  }
+
+  if (ATTACHMENT_AUDIO_EXTENSIONS.has(extension)) {
+    return { category: "audio", label: "AUD", description: "音频文件", iconAsset: ATTACHMENT_ICON_ASSET_PATHS.audio };
   }
 
   return {
@@ -1092,6 +1609,15 @@ function getAttachmentIconMeta(value) {
 
 function buildAttachmentIconMarkup(fileName) {
   const meta = getAttachmentIconMeta(fileName);
+
+  if (meta.iconAsset) {
+    return `
+      <span class="attachment-icon-art attachment-icon-art--${escapeHtml(meta.category)}" aria-hidden="true">
+        <img src="${escapeHtml(meta.iconAsset)}" alt="" />
+      </span>
+    `;
+  }
+
   return `
     <span class="attachment-icon-badge attachment-icon-badge--${escapeHtml(meta.category)}" aria-hidden="true">
       <span class="attachment-icon-glyph">${escapeHtml(meta.glyph)}</span>
@@ -3966,7 +4492,10 @@ function scheduleAutosave() {
 
   window.clearTimeout(state.saveTimer);
   state.saveTimer = window.setTimeout(() => {
-    saveDocument("自动保存完成", "success", { skipCleanup: true }).catch((error) => {
+    saveDocument("自动保存完成", "success", {
+      syncTitle: true,
+      skipCleanup: true,
+    }).catch((error) => {
       const message = `自动保存失败：${error.message}`;
       setStatus(message, "error");
       showToast(message, "error", 3200);
