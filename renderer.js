@@ -3150,6 +3150,10 @@ function syncCaretToPointerIfNeeded() {
 
   const range = getSelectionRange();
 
+  if (range && !range.collapsed && isRangeInsideEditor(range)) {
+    return;
+  }
+
   if (!range || !range.collapsed || !isRangeInsideEditor(range)) {
     placeCaretNearEditorPointer(point);
     return;
