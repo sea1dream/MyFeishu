@@ -1,4 +1,4 @@
-const { app, BrowserWindow, dialog, ipcMain, shell } = require("electron");
+const { app, BrowserWindow, Menu, dialog, ipcMain, shell } = require("electron");
 const AdmZip = require("adm-zip");
 const fs = require("node:fs");
 const fsp = fs.promises;
@@ -64,6 +64,7 @@ const PDF_EXPORT_PRELOAD_PATH = path.join(__dirname, "pdf-export-preload.js");
 const LOCAL_FONTS_ROOT = path.join(__dirname, "assets", "fonts");
 const FILE_ICON_ASSET_ROOT = path.join(__dirname, "assets", "file-icons");
 const WINDOW_ICON_PATH = path.join(__dirname, "assets", "branding", "flowdoc-window.ico");
+const GIT_EXECUTABLE = "git";
 const RUNTIME_DOCUMENT_METADATA = buildRuntimeDocumentMetadata({
   appId: APP_ID,
   appName: packageInfo.productName || "FlowDoc",
@@ -352,6 +353,7 @@ const ARCHIVE_PREVIEW_EXTENSIONS = new Set([
 let cachedDocumentLibraryPreference;
 let mainWindow = null;
 let pendingDocumentOpenPath = "";
+let isCheckingForUpdates = false;
 
 function isFlowDocFilePath(filePath) {
   return typeof filePath === "string" && path.extname(filePath).toLowerCase() === DOC_EXTENSION;
@@ -501,6 +503,256 @@ async function ensureDocumentLibraryRoot() {
   await fsp.mkdir(getDocumentLibraryRoot(), { recursive: true });
 }
 
+function getActiveWindow() {
+  return BrowserWindow.getFocusedWindow() || mainWindow || null;
+}
+
+async function runGitCommandAsync(args, options = {}) {
+  return execFileAsync(GIT_EXECUTABLE, args, {
+    cwd: __dirname,
+    windowsHide: true,
+    maxBuffer: 8 * 1024 * 1024,
+    ...options,
+  });
+}
+
+async function resolveGitUpdateContextAsync() {
+  if (app.isPackaged || !(await pathExists(path.join(__dirname, ".git")))) {
+    return {
+      supported: false,
+      reason: "当前运行的是打包版，或目录不是 Git 工作区，无法直接从 GitHub 拉取源码更新。",
+    };
+  }
+
+  try {
+    const [{ stdout: rootStdout }, { stdout: branchStdout }, { stdout: remoteStdout }] = await Promise.all([
+      runGitCommandAsync(["rev-parse", "--show-toplevel"]),
+      runGitCommandAsync(["branch", "--show-current"]),
+      runGitCommandAsync(["remote", "get-url", "origin"]),
+    ]);
+
+    let upstream = "";
+
+    try {
+      upstream = (await runGitCommandAsync(["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"])).stdout.trim();
+    } catch {
+      upstream = "";
+    }
+
+    return {
+      supported: true,
+      repoRoot: rootStdout.trim(),
+      branch: branchStdout.trim() || "main",
+      remoteUrl: remoteStdout.trim(),
+      upstream,
+    };
+  } catch (error) {
+    if (/not recognized|ENOENT/iu.test(String(error?.message || ""))) {
+      return {
+        supported: false,
+        reason: "没有检测到 Git 命令。请先安装 Git，再使用“检查更新”。",
+      };
+    }
+
+    throw error;
+  }
+}
+
+async function promptForRepositoryUpdateAsync(browserWindow) {
+  const dialogTarget = browserWindow || undefined;
+
+  if (isCheckingForUpdates) {
+    await dialog.showMessageBox(dialogTarget, {
+      type: "info",
+      buttons: ["知道了"],
+      defaultId: 0,
+      title: "检查更新",
+      message: "正在检查更新，请稍等。",
+    });
+    return;
+  }
+
+  isCheckingForUpdates = true;
+
+  try {
+    const context = await resolveGitUpdateContextAsync();
+
+    if (!context.supported) {
+      await dialog.showMessageBox(browserWindow, {
+        type: "info",
+        buttons: ["知道了"],
+        defaultId: 0,
+        title: "检查更新",
+        message: context.reason,
+      });
+      return;
+    }
+
+    const statusStdout = (await runGitCommandAsync(["status", "--porcelain"])).stdout.trim();
+
+    if (statusStdout) {
+      await dialog.showMessageBox(dialogTarget, {
+        type: "warning",
+        buttons: ["知道了"],
+        defaultId: 0,
+        title: "检查更新",
+        message: "当前工作区有未提交修改，已停止自动拉取。",
+        detail: "请先提交、暂存或清理本地改动，再执行“检查更新”，避免 git pull 产生冲突。",
+      });
+      return;
+    }
+
+    await runGitCommandAsync(["fetch", "--prune", "origin"]);
+    const upstreamRef = context.upstream || `origin/${context.branch}`;
+    const behindCount = Number.parseInt(
+      (await runGitCommandAsync(["rev-list", "--count", `HEAD..${upstreamRef}`])).stdout.trim(),
+      10,
+    );
+
+    if (!Number.isFinite(behindCount) || behindCount <= 0) {
+      await dialog.showMessageBox(dialogTarget, {
+        type: "info",
+        buttons: ["知道了"],
+        defaultId: 0,
+        title: "检查更新",
+        message: "当前已经是最新代码。",
+        detail: `${context.branch} 已和 ${upstreamRef} 保持同步。`,
+      });
+      return;
+    }
+
+    const commitPreview = (
+      await runGitCommandAsync(["log", "--oneline", `HEAD..${upstreamRef}`, "-n", "8"])
+    ).stdout.trim();
+
+    const updateChoice = await dialog.showMessageBox(dialogTarget, {
+      type: "question",
+      buttons: ["立即拉取", "取消"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "检查更新",
+      message: `发现 ${behindCount} 个新提交。`,
+      detail: [
+        `远端：${upstreamRef}`,
+        commitPreview ? "" : "没有额外的提交摘要。",
+        commitPreview,
+        "",
+        "将执行 git pull --ff-only。更新后建议重启应用。",
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    });
+
+    if (updateChoice.response !== 0) {
+      return;
+    }
+
+    await runGitCommandAsync(["pull", "--ff-only"]);
+
+    const restartChoice = await dialog.showMessageBox(dialogTarget, {
+      type: "info",
+      buttons: ["立即重启", "稍后"],
+      defaultId: 0,
+      cancelId: 1,
+      title: "检查更新",
+      message: "最新代码已经拉取完成。",
+      detail: "部分主进程和菜单改动需要重启应用后才会生效。",
+    });
+
+    if (restartChoice.response === 0) {
+      app.relaunch();
+      app.exit(0);
+    }
+  } catch (error) {
+    await dialog.showMessageBox(dialogTarget, {
+      type: "error",
+      buttons: ["知道了"],
+      defaultId: 0,
+      title: "检查更新失败",
+      message: "从 GitHub 拉取最新代码时出错了。",
+      detail: error?.message || String(error),
+    });
+  } finally {
+    isCheckingForUpdates = false;
+  }
+}
+
+function createApplicationMenu() {
+  const template = [
+    ...(process.platform === "darwin"
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" },
+              { type: "separator" },
+              { role: "services" },
+              { type: "separator" },
+              { role: "hide" },
+              { role: "hideOthers" },
+              { role: "unhide" },
+              { type: "separator" },
+              { role: "quit" },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: "File",
+      submenu: process.platform === "darwin" ? [{ role: "close" }] : [{ role: "quit" }],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      label: "Window",
+      submenu: [{ role: "minimize" }, { role: "zoom" }, ...(process.platform === "darwin" ? [{ type: "separator" }, { role: "front" }] : [{ role: "close" }])],
+    },
+    {
+      label: "Help",
+      submenu: [
+        {
+          label: "检查更新",
+          click: () => {
+            promptForRepositoryUpdateAsync(getActiveWindow()).catch(() => {});
+          },
+        },
+        {
+          label: "打开项目主页",
+          click: () => {
+            shell.openExternal("https://github.com/sea1dream/MyFeishu").catch(() => {});
+          },
+        },
+      ],
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 function createWindow() {
   const window = new BrowserWindow({
     width: 1440,
@@ -567,6 +819,7 @@ if (hasSingleInstanceLock) {
     app.setAppUserModelId(APP_ID);
     await ensureGlobalAssetDirectories();
     await ensureDocumentLibraryRoot();
+    createApplicationMenu();
     createWindow();
     queueDocumentOpenRequest(extractFlowDocPathFromArgv(process.argv.slice(1)));
     flushPendingDocumentOpenPath();
